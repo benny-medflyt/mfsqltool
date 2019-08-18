@@ -1,0 +1,18 @@
+1. "commander" command line parsing
+2. automatically launch temporary postgres server
+3. fix view caching/checking
+4. "hold" system for blocking/releasing updates when promise is running async
+5. Connection wrapper object (query, queryOne, queryOneOrNone)
+6. insert DSL
+      insertOne(conn, "employee",
+          {
+              fname: sql`${"alice"}`,
+              lname: sql`fname || ${"johnson"}`
+          }, sql`RETURNING id`);
+
+      insertMany(conn, "employee",
+          [{
+              id: sql`${}`,
+              fname: sql`${}`,
+              lname: sql`${fname} || fname`
+          }], sql`RETURNING id`);
