@@ -34,15 +34,15 @@ export function toSrcSpan(fileContents: string, position: number | null): SrcSpa
     return fileLineCol(fileContents, position - 1);
 }
 
-export function postgresqlErrorDiagnostic(fileName: string, fileContents: string, err: PostgreSqlError, span: SrcSpan): ErrorDiagnostic {
+export function postgresqlErrorDiagnostic(fileName: string, fileContents: string, err: PostgreSqlError, span: SrcSpan, message: string | null): ErrorDiagnostic {
     return {
         fileName: fileName,
         fileContents: fileContents,
         span: span,
-        messages: [
+        messages: (message !== null ? [message] : []).concat([
             chalk.bold(err.message),
             chalk.bold("code:") + " " + err.code
-        ].concat(err.detail !== null && err.detail !== err.message ? chalk.bold("detail:") + " " + err.detail : []),
+        ]).concat(err.detail !== null && err.detail !== err.message ? chalk.bold("detail:") + " " + err.detail : []),
         epilogue: err.hint !== null ? chalk.bold("hint:") + " " + err.hint : null
     };
 }

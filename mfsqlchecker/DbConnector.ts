@@ -1,15 +1,16 @@
 import { assertNever } from "assert-never";
 import chalk from "chalk";
+import { Bar, Presets } from "cli-progress";
 import * as fs from "fs";
 import * as path from "path";
 import * as pg from "pg";
 import { Either } from "./either";
 import { ErrorDiagnostic, postgresqlErrorDiagnostic, SrcSpan, toSrcSpan } from "./ErrorDiagnostic";
-import { closePg, connectPg, dropAllTables, getPostgreSqlErrorCode, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
+import { closePg, connectPg, dropAllTables, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
 import { calcDbMigrationsHash, connReplaceDbName, createBlankDatabase, dropDatabase, isMigrationFile, readdirAsync, testDatabaseName, validateTestDatabaseCluster } from "./pg_test_db";
 import { ColNullability, ResolvedQuery, SqlType } from "./queries";
 import { resolveFromSourceMap } from "./source_maps";
-import { SqlCreateView } from "./views";
+import { QualifiedSqlViewName, SqlCreateView } from "./views";
 
 export interface Manifest {
     viewLibrary: SqlCreateView[];
@@ -45,11 +46,11 @@ export class DbConnector {
     private migrationsDir: string;
     private client: pg.Client;
 
-    private viewNames: string[] = [];
-
-    // private viewErrors = new Map<QualifiedSqlViewName, ErrorDiagnostic>();
+    private viewNames: [string, ViewAnswer][] = [];
 
     private dbMigrationsHash: string = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+    private tableColsLibrary = new TableColsLibrary();
 
     private queryCache = new QueryMap<QueryAnswer>();
 
@@ -57,9 +58,10 @@ export class DbConnector {
         const hash = await calcDbMigrationsHash(this.migrationsDir);
         if (this.dbMigrationsHash !== hash) {
             this.dbMigrationsHash = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+            this.queryCache.clear();
             for (let i = this.viewNames.length - 1; i >= 0; --i) {
                 const viewName = this.viewNames[i];
-                await dropView(this.client, viewName);
+                await dropView(this.client, viewName[0]);
             }
             this.viewNames = [];
 
@@ -77,7 +79,7 @@ export class DbConnector {
                     if (perr === null) {
                         throw err;
                     } else {
-                        const errorDiagnostic = postgresqlErrorDiagnostic(path.join(this.migrationsDir, matchingFile), text, perr, toSrcSpan(text, perr.position));
+                        const errorDiagnostic = postgresqlErrorDiagnostic(path.join(this.migrationsDir, matchingFile), text, perr, toSrcSpan(text, perr.position), "Error in migration file");
                         return [errorDiagnostic];
                     }
                 }
@@ -88,30 +90,55 @@ export class DbConnector {
 
         console.log(new Date(), hash);
 
-        await updateViews(this.client, this.viewNames, manifest.viewLibrary);
-        this.viewNames = manifest.viewLibrary.map(v => v.viewName);
-
         let queryErrors: ErrorDiagnostic[] = [];
 
-        for (const query of manifest.queries) {
-            switch (query.type) {
-                case "Left":
-                    // TODO report error
-                    break;
-                case "Right":
-                    const cachedResult = this.queryCache.get(query.value.text, query.value.colTypes);
-                    if (cachedResult !== undefined) {
-                        queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, cachedResult));
-                    } else {
-                        const result = await processQuery(this.client, query.value);
-                        this.queryCache.set(query.value.text, query.value.colTypes, result);
-                        queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, result));
-                    }
-                    break;
-                default:
-                    assertNever(query);
+        this.viewNames = await updateViews(this.client, this.viewNames, manifest.viewLibrary);
+
+        await this.tableColsLibrary.refresh(this.client);
+
+        for (const [viewName, viewAnswer] of this.viewNames) {
+            const createView = manifest.viewLibrary.find(x => x.viewName === viewName);
+            if (createView === undefined) {
+                throw new Error("The Impossible Happened");
             }
+            queryErrors = queryErrors.concat(viewAnswerToErrorDiagnostics(createView, viewAnswer));
         }
+
+
+        const newQueryCache = new QueryMap<QueryAnswer>();
+
+        const queriesProgressBar = new Bar({
+            clearOnComplete: true,
+            etaBuffer: 50
+        }, Presets.legacy);
+        queriesProgressBar.start(manifest.queries.length, 0);
+        try {
+            let i = 0;
+            for (const query of manifest.queries) {
+                switch (query.type) {
+                    case "Left":
+                        break;
+                    case "Right":
+                        const cachedResult = this.queryCache.get(query.value.text, query.value.colTypes);
+                        if (cachedResult !== undefined) {
+                            queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, cachedResult));
+                            newQueryCache.set(query.value.text, query.value.colTypes, cachedResult);
+                        } else {
+                            const result = await processQuery(this.client, this.tableColsLibrary, query.value);
+                            newQueryCache.set(query.value.text, query.value.colTypes, result);
+                            queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, result));
+                        }
+                        break;
+                    default:
+                        assertNever(query);
+                }
+                queriesProgressBar.update(++i);
+            }
+        } finally {
+            queriesProgressBar.stop();
+        }
+
+        this.queryCache = newQueryCache;
 
         let xx: ErrorDiagnostic[] = [];
         for (const query of manifest.queries) {
@@ -161,39 +188,102 @@ async function dropView(client: pg.Client, viewName: string): Promise<void> {
     await client.query(`DROP VIEW IF EXISTS ${viewName}`);
 }
 
-async function updateViews(client: pg.Client, oldViews: string[], newViews: SqlCreateView[]) {
+/**
+ * @returns Array with the same length as `newViews`, with a matching element
+ * for each view in `newViews`
+ */
+async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], newViews: SqlCreateView[]): Promise<[string, ViewAnswer][]> {
     const newViewNames = new Set<string>();
     newViews.forEach(v => newViewNames.add(v.viewName));
 
     for (let i = oldViews.length - 1; i >= 0; --i) {
         const viewName = oldViews[i];
-        if (!newViewNames.has(viewName)) {
+        if (!newViewNames.has(viewName[0])) {
             console.log("Dropping view", viewName);
-            await dropView(client, viewName);
+            await dropView(client, viewName[0]);
         }
     }
 
-    const oldViewNames = new Set<string>();
-    oldViews.forEach(v => oldViewNames.add(v));
+    const oldViewAnswers = new Map<string, ViewAnswer>();
+    oldViews.forEach(([viewName, viewAnswer]) => oldViewAnswers.set(viewName, viewAnswer));
+
+    const result: [string, ViewAnswer][] = [];
 
     for (const view of newViews) {
-        if (!oldViewNames.has(view.viewName)) {
-            try {
-                console.log("Executing view", view.viewName);
-                await client.query(`CREATE OR REPLACE VIEW ${view.viewName} AS ${view.createQuery}`);
-            } catch (err) {
-                if (getPostgreSqlErrorCode(err) === null) {
-                    throw err;
-                } else {
-                    console.error(err);
-                    console.log(JSON.stringify(err, null, 2));
-                    console.log(err.message);
-                }
-            }
+        const oldAnswer = oldViewAnswers.get(view.viewName);
+        if (oldAnswer !== undefined) {
+            result.push([view.viewName, oldAnswer]);
+        } else {
+            const answer = await processCreateView(client, view);
+            result.push([view.viewName, answer]);
         }
+    }
+
+    return result;
+}
+
+async function processCreateView(client: pg.Client, view: SqlCreateView): Promise<ViewAnswer> {
+    try {
+        console.log("Executing view", view.viewName);
+        await client.query(`CREATE OR REPLACE VIEW ${view.viewName} AS ${view.createQuery}`);
+    } catch (err) {
+        const perr = parsePostgreSqlError(err);
+        if (perr === null) {
+            throw err;
+        } else {
+            if (perr.position !== null) {
+                // A bit hacky but does the trick:
+                perr.position -= `CREATE OR REPLACE VIEW ${view.viewName} AS `.length;
+            }
+            return {
+                type: "CreateError",
+                viewName: QualifiedSqlViewName.viewName(view.qualifiedViewname),
+                perr: perr
+            };
+        }
+    }
+
+    return {
+        type: "NoErrors"
+    };
+}
+
+type ViewAnswer =
+    ViewAnswer.NoErrors |
+    ViewAnswer.CreateError;
+
+namespace ViewAnswer {
+    export interface NoErrors {
+        type: "NoErrors";
+    }
+
+    export interface CreateError {
+        type: "CreateError";
+        viewName: string;
+        perr: PostgreSqlError;
     }
 }
 
+function viewAnswerToErrorDiagnostics(createView: SqlCreateView, viewAnswer: ViewAnswer): ErrorDiagnostic[] {
+    switch (viewAnswer.type) {
+        case "NoErrors":
+            return [];
+        case "CreateError":
+            const message = "Error in view \"" + chalk.bold(viewAnswer.viewName) + "\"";
+            if (viewAnswer.perr.position !== null) {
+                const p = resolveFromSourceMap(viewAnswer.perr.position, createView.sourceMap);
+                return [postgresqlErrorDiagnostic(createView.fileName, createView.fileContents, viewAnswer.perr, toSrcSpan(createView.fileContents, p), message)];
+            } else {
+                return [postgresqlErrorDiagnostic(createView.fileName, createView.fileContents, viewAnswer.perr, querySourceStart(createView.fileContents, createView.sourceMap), message)];
+            }
+        default:
+            return assertNever(viewAnswer);
+    }
+}
+
+/**
+ * Type safe "Map"-like from queries to some T
+ */
 class QueryMap<T> {
     set(text: string, colTypes: Map<string, [ColNullability, SqlType]> | null, value: T): void {
         this.internalMap.set(QueryMap.toKey(text, colTypes), value);
@@ -201,6 +291,10 @@ class QueryMap<T> {
 
     get(text: string, colTypes: Map<string, [ColNullability, SqlType]> | null): T | undefined {
         return this.internalMap.get(QueryMap.toKey(text, colTypes));
+    }
+
+    clear(): void {
+        this.internalMap = new Map<string, T>();
     }
 
     private static toKey(text: string, colTypes: Map<string, [ColNullability, SqlType]> | null): string {
@@ -238,8 +332,8 @@ namespace QueryAnswer {
     }
 }
 
-function querySourceStart(query: ResolvedQuery): SrcSpan {
-    return toSrcSpan(query.fileContents, query.fileContents.slice(query.sourceMap[0][1] + 1).search(/\S/) + query.sourceMap[0][1] + 2);
+function querySourceStart(fileContents: string, sourceMap: [number, number][]): SrcSpan {
+    return toSrcSpan(fileContents, fileContents.slice(sourceMap[0][1] + 1).search(/\S/) + sourceMap[0][1] + 2);
 }
 
 function queryAnswerToErrorDiagnostics(query: ResolvedQuery, queryAnswer: QueryAnswer): ErrorDiagnostic[] {
@@ -249,17 +343,17 @@ function queryAnswerToErrorDiagnostics(query: ResolvedQuery, queryAnswer: QueryA
         case "DescribeError":
             if (queryAnswer.perr.position !== null) {
                 const p = resolveFromSourceMap(queryAnswer.perr.position, query.sourceMap);
-                return [postgresqlErrorDiagnostic(query.fileName, query.fileContents, queryAnswer.perr, toSrcSpan(query.fileContents, p))];
+                return [postgresqlErrorDiagnostic(query.fileName, query.fileContents, queryAnswer.perr, toSrcSpan(query.fileContents, p), null)];
             } else {
-                return [postgresqlErrorDiagnostic(query.fileName, query.fileContents, queryAnswer.perr, querySourceStart(query))];
+                return [postgresqlErrorDiagnostic(query.fileName, query.fileContents, queryAnswer.perr, querySourceStart(query.fileContents, query.sourceMap), null)];
             }
         case "DuplicateColNamesError":
             return [{
                 fileName: query.fileName,
                 fileContents: query.fileContents,
-                span: querySourceStart(query),
+                span: querySourceStart(query.fileContents, query.sourceMap),
                 messages: [`Query return row contains duplicate column names:\n${JSON.stringify(queryAnswer.duplicateResultColumns, null, 2)}`],
-                epilogue: null
+                epilogue: chalk.bold("hint") + ": Specify a different name for the column using the Sql \"AS\" keyword"
             }];
         case "WrongColumnTypes":
             return [{
@@ -274,7 +368,7 @@ function queryAnswerToErrorDiagnostics(query: ResolvedQuery, queryAnswer: QueryA
     }
 }
 
-async function processQuery(client: pg.Client, query: ResolvedQuery): Promise<QueryAnswer> {
+async function processQuery(client: pg.Client, tableColsLibrary: TableColsLibrary, query: ResolvedQuery): Promise<QueryAnswer> {
     let fields: pg.FieldDef[] | null;
     try {
         fields = await pgDescribeQuery(client, query.text);
@@ -313,7 +407,7 @@ async function processQuery(client: pg.Client, query: ResolvedQuery): Promise<Qu
             };
         }
 
-        const sqlFields = await resolveFieldDefs(client, fields);
+        const sqlFields = resolveFieldDefs(tableColsLibrary, fields);
         if (query.colTypes !== null && stringifyColTypes(query.colTypes) !== stringifyColTypes(sqlFields)) {
             return {
                 type: "WrongColumnTypes",
@@ -343,44 +437,50 @@ function psqlOidSqlType(oid: number): SqlType {
     }
 }
 
-export async function resolveFieldDefs(client: pg.Client, fields: pg.FieldDef[]): Promise<Map<string, [ColNullability, SqlType]>> {
-    const tableIds: number[] = [];
-    for (const field of fields) {
-        tableIds.push(field.tableID);
+class TableColsLibrary {
+    public async refresh(client: pg.Client): Promise<void> {
+        this.lookupTable = new Map<string, boolean>();
+
+        const queryResult = await client.query(
+            `
+            SELECT
+                a.attrelid,
+                a.attnum,
+                a.attnotnull
+            FROM
+            pg_catalog.pg_attribute a
+            WHERE
+            a.attnum > 0;
+            `);
+
+        for (const row of queryResult.rows) {
+            const attrelid: number = row["attrelid"];
+            const attnum: number = row["attnum"];
+            const attnotnull: boolean = row["attnotnull"];
+
+            this.lookupTable.set(`${attrelid}-${attnum}`, attnotnull);
+        }
     }
 
-    const queryResult = await client.query(
-        `
-        SELECT
-            a.attrelid,
-            a.attnum,
-            a.attnotnull
-        FROM
-        pg_catalog.pg_attribute a
-        WHERE
-        a.attrelid = ANY($1)
-        AND a.attnum > 0;
-        `, [tableIds]);
-
-    const lookupTable = new Map<string, boolean>();
-    for (const row of queryResult.rows) {
-        const attrelid: number = row["attrelid"];
-        const attnum: number = row["attnum"];
-        const attnotnull: boolean = row["attnotnull"];
-
-        lookupTable.set(`${attrelid}-${attnum}`, attnotnull);
+    public isNotNull(tableID: number, columnID: number): boolean {
+        const notNull = this.lookupTable.get(`${tableID}-${columnID}`);
+        if (notNull === undefined) {
+            throw new Error(`Couldn't find column in table ${tableID}-${columnID}`);
+        }
+        return notNull;
     }
 
+    private lookupTable = new Map<string, boolean>();
+}
+
+export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, fields: pg.FieldDef[]): Map<string, [ColNullability, SqlType]> {
     const result = new Map<string, [ColNullability, SqlType]>();
 
     for (const field of fields) {
         const sqlType = psqlOidSqlType(field.dataTypeID);
         let colNullability: ColNullability = ColNullability.OPT;
         if (field.tableID > 0) {
-            const notNull = lookupTable.get(`${field.tableID}-${field.columnID}`);
-            if (notNull === undefined) {
-                throw new Error(`Couldn't find column in table ${field.tableID}-${field.columnID}`);
-            }
+            const notNull = tableColsLibrary.isNotNull(field.tableID, field.columnID);
             if (notNull) {
                 colNullability = ColNullability.REQ;
             }

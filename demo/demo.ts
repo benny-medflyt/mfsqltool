@@ -32,7 +32,7 @@ function blah(): Blah {
     return "blah";
 }
 
-const badView = defineSqlView`SELECT 3 FROM x`;
+const badView = defineSqlView`SELECT 'cool' AS num`;
 
 export async function test() {
     let theId: string | number = 3 + 2;
@@ -49,9 +49,9 @@ export async function test() {
         phonenumber: Opt<string>,
         salary: Req<number>,
         manager_id: Opt<number>,
-        managername: Req<string>
-    }
-    >(conn, sql
+        managername: Req<string>,
+        badViewNum: Opt<string>
+    }>(conn, sql
         `
         SELECT
             employee.fname,
@@ -59,8 +59,11 @@ export async function test() {
             employee.phonenumber,
             employee.salary,
             employee.manager_id,
-            e.fname AS managerName
-        FROM employee
+            e.fname AS managerName,
+            ${badView}.num AS "badViewNum"
+        FROM
+        employee
+        INNER JOIN ${badView} ON employee.fname = ${badView}.num
         LEFT JOIN employee e ON employee.manager_id = e.id
         WHERE employee.fname = ${"alice"}
         AND employee.salary = ${5}

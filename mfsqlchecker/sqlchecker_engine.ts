@@ -50,8 +50,6 @@ export class SqlCheckerEngine {
 
         console.log("TIME:", new Date().getTime() - before.getTime());
 
-        console.log(sqlViews);
-
         const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
 
         let queries: QueryCallExpression[] = [];

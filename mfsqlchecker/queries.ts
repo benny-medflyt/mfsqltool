@@ -1,4 +1,5 @@
 import { assertNever } from "assert-never";
+import chalk from "chalk";
 import * as ts from "typescript";
 import { Either } from "./either";
 import { ErrorDiagnostic, nodeErrorDiagnostic, SrcSpan } from "./ErrorDiagnostic";
@@ -123,6 +124,10 @@ function buildQueryCallExpression(node: ts.CallExpression): QueryCallExpression 
         fragments.push({
             type: "StringFragment",
             text: sqlExp.template.head.text,
+            // If there is whitespace before the opening quote (`) then "pos"
+            // starts at the beginning of the whitespace (so we use this
+            // formula to guarantee that we get the position of the start of
+            // the opening quote (`) char)
             sourcePosStart: sqlExp.template.head.end - sqlExp.template.head.text.length - 3
         });
 
@@ -322,7 +327,7 @@ export function resolveQueryFragment(projectDir: string, checker: ts.TypeChecker
                         const qualifiedSqlViewName = resolveViewIdentifier(projectDir, frag.exp.getSourceFile(), frag.exp);
                         const viewName = lookupViewName(qualifiedSqlViewName);
                         if (viewName === undefined) {
-                            errors.push(nodeErrorDiagnostic(frag.exp, "SQL View Reference not found or has errors"));
+                            errors.push(nodeErrorDiagnostic(frag.exp, "SQL View Reference not found or has errors: \"" + chalk.bold(QualifiedSqlViewName.viewName(qualifiedSqlViewName)) + "\""));
                         } else {
                             text += '"' + viewName + '"';
                         }

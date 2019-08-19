@@ -1,6 +1,6 @@
 import { defineSqlView, Opt, Req } from "../lib/sql_linter";
 
-export const coolView = defineSqlView`SELECT 3`;
+export const coolView = defineSqlView`SELECT 5`;
 
 export function x(): void {
 }

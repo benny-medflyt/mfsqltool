@@ -1,9 +1,11 @@
-1. "commander" command line parsing
-2. automatically launch temporary postgres server
-3. fix view caching/checking
-4. "hold" system for blocking/releasing updates when promise is running async
-5. Connection wrapper object (query, queryOne, queryOneOrNone)
-6. insert DSL
+[ ] progress bar for pg queries
+[ ] "commander" command line parsing
+[ ] automatically launch temporary postgres server
+[V] fix view caching/checking
+[ ] "hold" system for blocking/releasing updates when promise is running async. also maybe "cancellation token" system (for prematurely stopping currently running async task -- don't stop migrations or views, only stop queries)
+[ ] Emit error when an unnamed column ("?column?") is returned
+[ ] Connection wrapper object (query, queryOne, queryOneOrNone)
+[ ] insert DSL
       insertOne(conn, "employee",
           {
               fname: sql`${"alice"}`,

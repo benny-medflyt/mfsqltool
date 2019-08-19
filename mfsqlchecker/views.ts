@@ -2,9 +2,11 @@ import { assertNever } from "assert-never";
 import * as crypto from "crypto";
 import * as path from "path";
 import * as ts from "typescript";
+import { Either } from "./either";
+import { ErrorDiagnostic, nodeErrorDiagnostic } from "./ErrorDiagnostic";
 import { identifierImportedFrom, isIdentifierFromModule, ModuleId } from "./ts_extra";
 
-function calcViewName(varName: string | null, query: string) {
+function calcViewName(varName: string | null, query: string): string {
     const hash = crypto.createHash("sha1").update(query).digest("hex");
 
     const viewName = varName !== null
@@ -12,6 +14,10 @@ function calcViewName(varName: string | null, query: string) {
         : "view_" + hash.slice(0, 12);
 
     return viewName;
+}
+
+function viewNameLength(varName: string | null): number {
+    return calcViewName(varName, "").length;
 }
 
 export function resolveViewIdentifier(projectDir: string, sourceFile: ts.SourceFile, ident: ts.Identifier): QualifiedSqlViewName {
@@ -27,25 +33,53 @@ export function resolveViewIdentifier(projectDir: string, sourceFile: ts.SourceF
 }
 
 export class SqlViewDefinition {
-    static parseFromTemplateExpression(projectDir: string, sourceFile: ts.SourceFile, varName: string | null, node: ts.TemplateLiteral): SqlViewDefinition {
+    static parseFromTemplateExpression(projectDir: string, sourceFile: ts.SourceFile, varName: string | null, node: ts.TemplateLiteral): Either<ErrorDiagnostic, SqlViewDefinition> {
         if (ts.isNoSubstitutionTemplateLiteral(node)) {
-            return new SqlViewDefinition(sourceFile.fileName, varName, [{ type: "StringFragment", text: node.text }]);
+            const sourceMap: [number, number][] = [[0, node.pos]];
+            console.log("sourceMap", sourceMap);
+            return {
+                type: "Right",
+                value: new SqlViewDefinition(sourceFile.fileName, sourceFile.text, varName, [{ type: "StringFragment", text: node.text }], sourceMap)
+            };
         } else if (ts.isTemplateExpression(node)) {
+            const sourceMap: [number, number][] = [];
+
             const fragments: SqlViewDefinition.Fragment[] = [];
             fragments.push({ type: "StringFragment", text: node.head.text });
 
+            let c = 0;
+
+            // If there is whitespace before the opening quote (`) then "pos"
+            // starts at the beginning of the whitespace (so we use this
+            // formula to guarantee that we get the position of the start of
+            // the opening quote (`) char)
+            sourceMap.push([c, node.head.end - node.head.text.length - 3]);
+
+            c += node.head.text.length;
+
             for (const span of node.templateSpans) {
                 if (!ts.isIdentifier(span.expression)) {
-                    throw new ValidationError(sourceFile, span, "defineSqlView template spans can only be identifiers (no other expressions allowed)");
+                    return {
+                        type: "Left",
+                        value: nodeErrorDiagnostic(span, "defineSqlView template spans can only be identifiers (no other expressions allowed)")
+                    };
                 }
 
                 const qualifiedSqlViewName = resolveViewIdentifier(projectDir, sourceFile, span.expression);
                 fragments.push({ type: "ViewReference", qualifiedSqlViewName: qualifiedSqlViewName });
 
+                c += viewNameLength(span.expression.text);
+
                 fragments.push({ type: "StringFragment", text: span.literal.text });
+                sourceMap.push([c, span.literal.pos]);
+
+                c += span.literal.text.length;
             }
 
-            return new SqlViewDefinition(sourceFile.fileName, varName, fragments);
+            return {
+                type: "Right",
+                value: new SqlViewDefinition(sourceFile.fileName, sourceFile.text, varName, fragments, sourceMap)
+            };
         } else {
             return assertNever(node);
         }
@@ -103,6 +137,14 @@ export class SqlViewDefinition {
         return this.fileName;
     }
 
+    getFileContents(): string {
+        return this.fileContents;
+    }
+
+    getSourceMap(): [number, number][] {
+        return this.sourceMap;
+    }
+
     /**
      * Call this if any of the dependencies have changed
      */
@@ -129,8 +171,10 @@ export class SqlViewDefinition {
         return `${this.varName} ${JSON.stringify(this.dependencies)} ${JSON.stringify(this.fragments)}`;
     }
 
-    private constructor(fileName: string, varName: string | null, fragments: SqlViewDefinition.Fragment[]) {
+    private constructor(fileName: string, fileContents: string, varName: string | null, fragments: SqlViewDefinition.Fragment[], sourceMap: [number, number][]) {
         this.fileName = fileName;
+        this.fileContents = fileContents;
+        this.sourceMap = sourceMap;
         this.varName = varName;
         this.initialFragments = fragments;
         this.fragments = [...fragments];
@@ -144,6 +188,8 @@ export class SqlViewDefinition {
     }
 
     private readonly fileName: string;
+    private readonly fileContents: string;
+    private readonly sourceMap: [number, number][];
     private readonly varName: string | null;
     private readonly initialFragments: SqlViewDefinition.Fragment[];
     private readonly dependencies: QualifiedSqlViewName[];
@@ -175,10 +221,11 @@ export interface SqlCreateView {
     readonly viewName: string;
     readonly createQuery: string;
     readonly fileName: string;
+    readonly fileContents: string;
+    readonly sourceMap: [number, number][];
 }
 
 function fullyResolveSqlViewDefinition(v: SqlViewDefinition, myName: QualifiedSqlViewName, library: Map<QualifiedSqlViewName, SqlViewDefinition>): void {
-    console.log("fullyResolveSqlViewDefinition", myName);
     if (v.isFullyResolved()) {
         return;
     }
@@ -234,7 +281,9 @@ export function resolveAllViewDefinitions(library: Map<QualifiedSqlViewName, Sql
             qualifiedViewname: name,
             viewName: view.getName(),
             createQuery: view.fullyResolvedQuery(),
-            fileName: view.getFileName()
+            fileName: view.getFileName(),
+            fileContents: view.getFileContents(),
+            sourceMap: view.getSourceMap()
         });
         added.add(name);
     }
@@ -316,7 +365,15 @@ export function sqlViewsLibraryAddFromSourceFile(projectDir: string, sourceFile:
                             const qualifiedSqlViewName = QualifiedSqlViewName.create(sourceFileModuleName(projectDir, sf), viewName);
                             console.log("viewName", viewName, qualifiedSqlViewName);
                             const sqlViewDefinition = SqlViewDefinition.parseFromTemplateExpression(projectDir, sf, viewName, decl.initializer.template);
-                            viewLibrary.set(qualifiedSqlViewName, sqlViewDefinition);
+                            switch (sqlViewDefinition.type) {
+                                case "Left":
+                                    throw new ValidationError(sf, decl.name, "TODO XXXX");
+                                case "Right":
+                                    viewLibrary.set(qualifiedSqlViewName, sqlViewDefinition.value);
+                                    break;
+                                default:
+                                    assertNever(sqlViewDefinition);
+                            }
                         }
                     }
                 }

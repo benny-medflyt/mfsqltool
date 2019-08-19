@@ -4,16 +4,22 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "ts-watch": "tsc --project mfsqlchecker --watch",
+    "start": "node build/mfsqlchecker/sqlchecker_engine.js",
+    "lint": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish",
+    "lint-fix": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish --fix",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/cli-progress": "1.8.1",
     "@types/node": "12.6.9",
     "@types/pg": "7.4.14",
     "@types/stack-trace": "0.0.29",
     "assert-never": "1.2.0",
     "chalk": "2.4.2",
+    "cli-progress": "3.0.0",
     "pg": "7.12.1",
     "pg-connection-string": "^2.1.0",
     "source-map-support": "0.5.13",
