@@ -284,6 +284,7 @@ export class TypeScriptWatcher {
 //     );
 // }
 
+/*
 async function main() {
     console.log("connecting...");
     const dbConnector = await DbConnector.Connect("migrations", "postgres://test:test@localhost:6432/test", "sql_checker_db");
@@ -294,3 +295,4 @@ async function main() {
 }
 
 main();
+*/

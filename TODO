@@ -1,7 +1,9 @@
-[ ] progress bar for pg queries
+[V] progress bar for pg queries
 [ ] "commander" command line parsing
+[ ] command line one-shot usage
 [ ] automatically launch temporary postgres server
 [V] fix view caching/checking
+[ ] change view exceptions to ErrorDiagnostic
 [ ] "hold" system for blocking/releasing updates when promise is running async. also maybe "cancellation token" system (for prematurely stopping currently running async task -- don't stop migrations or views, only stop queries)
 [ ] Emit error when an unnamed column ("?column?") is returned
 [ ] Connection wrapper object (query, queryOne, queryOneOrNone)
@@ -18,3 +20,4 @@
               fname: sql`${}`,
               lname: sql`${fname} || fname`
           }], sql`RETURNING id`);
+[ ] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)

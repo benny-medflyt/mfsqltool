@@ -55,7 +55,7 @@ export function connReplaceDbName(url: string, dbName: string): string {
 /**
  * Safety feature to prevent us messing with or deleting the production database!!!!
  */
-function isTestDatabaseCluster(url: string): boolean {
+export function isTestDatabaseCluster(url: string): boolean {
     const p = parse(url);
     return p.host === "localhost" || p.host === "127.0.0.1";
 }

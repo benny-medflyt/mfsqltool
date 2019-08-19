@@ -1,3 +1,96 @@
+import * as commander from "commander";
+import { DbConnector } from "./DbConnector";
+import { parsePostgreSqlError } from "./pg_extra";
+import { isTestDatabaseCluster } from "./pg_test_db";
+import { SqlCheckerEngine, TypeScriptWatcher } from "./sqlchecker_engine";
+
+interface PostgresConnection {
+    readonly url: string;
+    readonly databaseName: string | undefined;
+}
+
+interface Options {
+    readonly watchMode: boolean;
+    readonly projectDir: string;
+    readonly migrationsDir: string;
+    readonly postgresConnection: PostgresConnection;
+}
+
+function parseOptions(): Options {
+    const program = new commander.Command();
+    program.version("0.0.1");
+
+    program
+        .option("-w, --watch", "watch mode")
+        .option("-p, --project <dir>", "Project directory that should be checked")
+        .option("-m, --migrations <dir>", "Migrations directory that should be used")
+        .option("-u, --postgres-url <url>", "PostgreSQL connection string")
+        .option("-d, --db-name <name>", "Name of database to use");
+
+    program.parse(process.argv);
+
+    function required(arg: string, argFlag: string) {
+        if (!program[arg]) {
+            console.error(`Missing required argument: ${argFlag}`);
+            process.exit(1);
+        }
+    }
+
+    required("project", "--project");
+    required("migrations", "--migrations");
+    required("postgresUrl", "--postgres-url");
+
+    const options: Options = {
+        watchMode: program.watch === true,
+        projectDir: program.project,
+        migrationsDir: program.migrations,
+        postgresConnection: {
+            url: program.postgresUrl,
+            databaseName: program.dbName ? program.dbName : undefined
+        }
+    };
+    return options;
+}
+
+async function main(): Promise<void> {
+    const options = parseOptions();
+
+    if (!isTestDatabaseCluster(options.postgresConnection.url)) {
+        console.error("Database Cluster url is not a local connection or is invalid:\n" + options.postgresConnection.url);
+        // process.exit(1);
+    }
+
+    let dbConnector: DbConnector;
+    try {
+        dbConnector = await DbConnector.Connect(options.migrationsDir, options.postgresConnection.url, options.postgresConnection.databaseName);
+    } catch (err) {
+        const perr = parsePostgreSqlError(err);
+        if (perr !== null) {
+            console.error("Error connecting to database cluster:");
+            console.error(perr.message);
+            console.error("code: " + perr.code);
+            if (perr.detail !== null && perr.detail !== perr.message) {
+                console.error("detail: " + perr.detail);
+            }
+            if (perr.hint !== null) {
+                console.error("hint: " + perr.hint);
+            }
+        } else if (err.code) {
+            console.error("Error connecting to database cluster:");
+            console.error(err.message);
+        } else {
+            throw err;
+        }
+        return process.exit(1);
+    }
+
+    const e = new SqlCheckerEngine(dbConnector);
+    const w = new TypeScriptWatcher(e);
+    w.run(options.projectDir);
+}
+
+main();
+
 // import * as ts from "typescript";
 // import * as fs from "fs";
 

@@ -7,7 +7,7 @@ import * as pg from "pg";
 import { Either } from "./either";
 import { ErrorDiagnostic, postgresqlErrorDiagnostic, SrcSpan, toSrcSpan } from "./ErrorDiagnostic";
 import { closePg, connectPg, dropAllTables, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
-import { calcDbMigrationsHash, connReplaceDbName, createBlankDatabase, dropDatabase, isMigrationFile, readdirAsync, testDatabaseName, validateTestDatabaseCluster } from "./pg_test_db";
+import { calcDbMigrationsHash, connReplaceDbName, createBlankDatabase, dropDatabase, isMigrationFile, readdirAsync, testDatabaseName } from "./pg_test_db";
 import { ColNullability, ResolvedQuery, SqlType } from "./queries";
 import { resolveFromSourceMap } from "./source_maps";
 import { QualifiedSqlViewName, SqlCreateView } from "./views";
@@ -560,8 +560,6 @@ function stringifyColTypes(colTypes: Map<string, [ColNullability, SqlType]>): st
 }
 
 async function newConnect(adminUrl: string, name?: string): Promise<pg.Client> {
-    validateTestDatabaseCluster(adminUrl);
-
     const newDbName = name !== undefined
         ? name
         : await testDatabaseName();

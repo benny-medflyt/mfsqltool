@@ -32,7 +32,7 @@ function blah(): Blah {
     return "blah";
 }
 
-const badView = defineSqlView`SELECT 'cool' AS num`;
+const badView = defineSqlView`SELECT 'cool'::TEXT AS num`;
 
 export async function test() {
     let theId: string | number = 3 + 2;
