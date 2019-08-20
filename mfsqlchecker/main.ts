@@ -29,7 +29,7 @@ function parseOptions(): Options {
 
     program.parse(process.argv);
 
-    if (!process.argv.slice(2).length) {
+    if (process.argv.slice(2).length === 0) {
         program.outputHelp();
         process.exit(1);
     }
