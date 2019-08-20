@@ -85,6 +85,7 @@ export class DbConnector {
                 }
             }
 
+            await this.tableColsLibrary.refreshTables(this.client);
             this.dbMigrationsHash = hash;
         }
 
@@ -92,9 +93,13 @@ export class DbConnector {
 
         let queryErrors: ErrorDiagnostic[] = [];
 
-        this.viewNames = await updateViews(this.client, this.viewNames, manifest.viewLibrary);
+        const [updated, newViewNames] = await updateViews(this.client, this.viewNames, manifest.viewLibrary);
 
-        await this.tableColsLibrary.refresh(this.client);
+        if (updated) {
+            await this.tableColsLibrary.refreshViews(this.client);
+        }
+
+        this.viewNames = newViewNames;
 
         for (const [viewName, viewAnswer] of this.viewNames) {
             const createView = manifest.viewLibrary.find(x => x.viewName === viewName);
@@ -192,7 +197,9 @@ async function dropView(client: pg.Client, viewName: string): Promise<void> {
  * @returns Array with the same length as `newViews`, with a matching element
  * for each view in `newViews`
  */
-async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], newViews: SqlCreateView[]): Promise<[string, ViewAnswer][]> {
+async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], newViews: SqlCreateView[]): Promise<[boolean, [string, ViewAnswer][]]> {
+    let updated: boolean = false;
+
     const newViewNames = new Set<string>();
     newViews.forEach(v => newViewNames.add(v.viewName));
 
@@ -201,6 +208,7 @@ async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], 
         if (!newViewNames.has(viewName[0])) {
             console.log("Dropping view", viewName[0]);
             await dropView(client, viewName[0]);
+            updated = true;
         }
     }
 
@@ -216,10 +224,11 @@ async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], 
         } else {
             const answer = await processCreateView(client, view);
             result.push([view.viewName, answer]);
+            updated = true;
         }
     }
 
-    return result;
+    return [updated, result];
 }
 
 async function processCreateView(client: pg.Client, view: SqlCreateView): Promise<ViewAnswer> {
@@ -438,8 +447,24 @@ function psqlOidSqlType(oid: number): SqlType {
 }
 
 class TableColsLibrary {
-    public async refresh(client: pg.Client): Promise<void> {
-        this.lookupTable = new Map<string, boolean>();
+    /**
+     * After calling this method, you should also call `refreshViews`
+     */
+    public async refreshTables(client: pg.Client): Promise<void> {
+        this.tableLookupTable = new Map<string, boolean>();
+
+        // <https://www.postgresql.org/docs/current/catalog-pg-class.html>
+        //     pg_catalog.pg_class.relkind char:
+        //     r = ordinary table
+        //     i = index
+        //     S = sequence
+        //     t = TOAST table
+        //     v = view
+        //     m = materialized view
+        //     c = composite type
+        //     f = foreign table
+        //     p = partitioned table
+        //     I = partitioned index
 
         const queryResult = await client.query(
             `
@@ -448,9 +473,12 @@ class TableColsLibrary {
                 a.attnum,
                 a.attnotnull
             FROM
-            pg_catalog.pg_attribute a
+            pg_catalog.pg_attribute a,
+            pg_catalog.pg_class c
             WHERE
-            a.attnum > 0;
+            c.oid = a.attrelid
+            AND a.attnum > 0
+            AND c.relkind = 'r'
             `);
 
         for (const row of queryResult.rows) {
@@ -458,19 +486,108 @@ class TableColsLibrary {
             const attnum: number = row["attnum"];
             const attnotnull: boolean = row["attnotnull"];
 
-            this.lookupTable.set(`${attrelid}-${attnum}`, attnotnull);
+            this.tableLookupTable.set(`${attrelid}-${attnum}`, attnotnull);
+        }
+    }
+
+    public async refreshViews(client: pg.Client): Promise<void> {
+        this.viewLookupTable = new Map<string, boolean>();
+
+        // This query was taken from here and (slightly) adapted:
+        // <https://github.com/PostgREST/postgrest/blob/e83144ce7fc239b3161f53f17ecaf80fbb9e19f8/src/PostgREST/DbStructure.hs#L725>
+        const queryResult = await client.query(
+            `
+            with views as (
+                select
+                  n.nspname   as view_schema,
+                  c.oid       as view_oid,
+                  c.relname   as view_name,
+                  r.ev_action as view_definition
+                from pg_class c
+                join pg_namespace n on n.oid = c.relnamespace
+                join pg_rewrite r on r.ev_class = c.oid
+                where (c.relkind in ('v', 'm')) and n.nspname = 'public'
+              ),
+              removed_subselects as(
+                select
+                  view_schema, view_name, view_oid,
+                  regexp_replace(view_definition, '{subselectRegex}', '', 'g') as x
+                from views
+              ),
+              target_lists as(
+                select
+                  view_schema, view_name, view_oid,
+                  regexp_split_to_array(x, 'targetList') as x
+                from removed_subselects
+              ),
+              last_target_list_wo_tail as(
+                select
+                  view_schema, view_name, view_oid,
+                  (regexp_split_to_array(x[array_upper(x, 1)], ':onConflict'))[1] as x
+                from target_lists
+              ),
+              target_entries as(
+                select
+                  view_schema, view_name, view_oid,
+                  unnest(regexp_split_to_array(x, 'TARGETENTRY')) as entry
+                from last_target_list_wo_tail
+              ),
+              results as(
+                select
+                  view_schema, view_name, view_oid,
+                  substring(entry from ':resname (.*?) :') as view_colum_name,
+                  substring(entry from ':resorigtbl (.*?) :') as resorigtbl,
+                  substring(entry from ':resorigcol (.*?) :') as resorigcol
+                from target_entries
+              )
+              select
+                -- sch.nspname as table_schema,
+                -- tbl.relname as table_name,
+                tbl.oid     as table_oid,
+                -- col.attname as table_column_name,
+                col.attnum  as table_column_num,
+                -- res.view_schema,
+                -- res.view_name,
+                res.view_oid,
+                -- res.view_colum_name,
+                vcol.attnum as view_colum_num
+              from results res
+              join pg_class tbl on tbl.oid::text = res.resorigtbl
+              join pg_attribute col on col.attrelid = tbl.oid and col.attnum::text = res.resorigcol
+              -- join pg_namespace sch on sch.oid = tbl.relnamespace
+              join pg_attribute vcol on vcol.attrelid = res.view_oid and vcol.attname::text = res.view_colum_name
+              where resorigtbl <> '0'
+              order by view_oid;
+            `);
+
+        for (const row of queryResult.rows) {
+            const viewOid: number = row["view_oid"];
+            const viewColumNum: number = row["view_colum_num"];
+            const tableOid: number = row["table_oid"];
+            const tableColumnNum: number = row["table_column_num"];
+
+
+            const isNotNull = this.isNotNull(tableOid, tableColumnNum);
+            this.viewLookupTable.set(`${viewOid}-${viewColumNum}`, isNotNull);
         }
     }
 
     public isNotNull(tableID: number, columnID: number): boolean {
-        const notNull = this.lookupTable.get(`${tableID}-${columnID}`);
-        if (notNull === undefined) {
-            throw new Error(`Couldn't find column in table ${tableID}-${columnID}`);
+        const notNull1 = this.tableLookupTable.get(`${tableID}-${columnID}`);
+        if (notNull1 !== undefined) {
+            return notNull1;
         }
-        return notNull;
+
+        const notNull2 = this.viewLookupTable.get(`${tableID}-${columnID}`);
+        if (notNull2 !== undefined) {
+            return notNull2;
+        }
+
+        return false;
     }
 
-    private lookupTable = new Map<string, boolean>();
+    private tableLookupTable = new Map<string, boolean>();
+    private viewLookupTable = new Map<string, boolean>();
 }
 
 export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, fields: pg.FieldDef[]): Map<string, [ColNullability, SqlType]> {
