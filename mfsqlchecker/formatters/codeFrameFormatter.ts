@@ -47,8 +47,6 @@ function renderMessages(errorDiagnostic: ErrorDiagnostic): string {
 function renderCodeFrame(errorDiagnostic: ErrorDiagnostic): string {
     let result = "";
 
-    const lines = errorDiagnostic.fileContents.split("\n");
-
     let startLine: number;
     let endLine: number;
     switch (errorDiagnostic.span.type) {
@@ -65,6 +63,10 @@ function renderCodeFrame(errorDiagnostic: ErrorDiagnostic): string {
         default:
             return assertNever(errorDiagnostic.span);
     }
+
+    result += "\n";
+
+    const lines = errorDiagnostic.fileContents.split("\n");
 
     const LINES_MARGIN = 6;
 
@@ -120,6 +122,8 @@ function renderCodeFrame(errorDiagnostic: ErrorDiagnostic): string {
                 assertNever(errorDiagnostic.span);
         }
     }
+
+    result += "\n";
 
     return result;
 }
