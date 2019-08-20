@@ -1,27 +1,44 @@
+Static Checker:
+
 [V] progress bar for pg queries
 [V] "commander" command line parsing
 [ ] command line one-shot usage
-[ ] automatically launch temporary postgres server
 [V] fix view caching/checking
 [ ] change view exceptions to ErrorDiagnostic
 [ ] "hold" system for blocking/releasing updates when promise is running async. also maybe "cancellation token" system (for prematurely stopping currently running async task -- don't stop migrations or views, only stop queries)
-[ ] Emit error when an unnamed column ("?column?") is returned
-[ ] Connection wrapper object (query, queryOne, queryOneOrNone)
+[/] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)
+
+Run-time Library:
+
+[ ] Connection wrapper object (conn.query, conn.queryOne, conn.queryOneOrNone)
 [ ] insert DSL
-      insertOne(conn, "employee",
+      conn.insertOne("employee",
           {
               fname: sql`${"alice"}`,
               lname: sql`fname || ${"johnson"}`
           }, sql`RETURNING id`);
 
-      insertMany(conn, "employee",
+      conn.insertMany("employee",
           [{
               id: sql`${}`,
               fname: sql`${}`,
               lname: sql`${fname} || fname`
           }], sql`RETURNING id`);
-[/] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)
+[ ] migrations runner (algorithm:
+    no un-applied migration files? just "CREATE OR REPLACE" all of the views (for performance: maybe all concatenated together as one huge string?)
+    otherwise: try applying un-applied migration(s) file. did it work? great!
+      otherwise, did we get error "2BP01" or "0A000"?
+        yes: regex match "view xxxx" from "detail" and "DROP VEW xxxx CASCADE" (very carefully verifying via "pg_class" that xxxx is a view, not a table!). then try the migration(s) again (recursively if necessary)
+        no: drop all of our views (view_foo_yyyyyy), then try again
+    finally: "CREATE OR REPLACE" all of the views.
 
+Nice-to-have:
+
+[ ] automatically launch temporary postgres server
+[ ] Emit error when an unnamed column ("?column?") is returned
+
+
+Create temporary database:
 
 $ initdb -D /tmp/test_sql -N -U test -W
 $ postgres -F -D /tmp/test_sql -p 6432 -s
