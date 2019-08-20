@@ -9,10 +9,22 @@ export function vscodeFormatter(errorDiagnostic: ErrorDiagnostic): string {
 
     const filename = path.relative(process.cwd(), errorDiagnostic.fileName);
 
+    // VSCode recognizeds "error", "warning", "info"
+    // Reference: <https://code.visualstudio.com/docs/editor/tasks-appendix>
     let severity = "error";
     function addLine(msg: string) {
         result += "[DIAGNOSTIC] " + filename + " (" + severity + ") " + loc + " " + msg + "\n";
-        severity = "error";
+
+        // NOTE: I initially had the genius idea to tag the first line as
+        // "error" and the following lines as "info", so that a glance at the
+        // VSCode problems window would more clearly show the true number of
+        // errors. Unfortunately, VSCode will re-arrange the problems so that
+        // all errors always appear above all info messages, this causes the
+        // lines to be jumbled up when we emit more than one error (or if
+        // there are other errors from other tools). Oh well, stick with
+        // everything as an "error" line for now
+
+        // severity = "info";
     }
 
     for (const message of errorDiagnostic.messages) {
