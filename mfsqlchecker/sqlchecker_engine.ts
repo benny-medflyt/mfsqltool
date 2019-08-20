@@ -2,12 +2,12 @@ import "source-map-support/register"; // tslint:disable-line:no-import-side-effe
 
 import * as ts from "typescript";
 import { DbConnector } from "./DbConnector";
-import { codeFrameFormatter } from "./formatters/codeFrameFormatter";
+import { ErrorDiagnostic } from "./ErrorDiagnostic";
 import { findAllQueryCalls, QueryCallExpression, resolveQueryFragment } from "./queries";
 import { QualifiedSqlViewName, resolveAllViewDefinitions, sourceFileModuleName, SqlViewDefinition, sqlViewLibraryResetToInitialFragmentsIncludingDeps, sqlViewsLibraryAddFromSourceFile } from "./views";
 
 export class SqlCheckerEngine {
-    constructor(private readonly dbConnector: DbConnector) {
+    constructor(private readonly dbConnector: DbConnector, private readonly formatter: (errorDiagnostic: ErrorDiagnostic) => string) {
         // TODO ...
         this.viewLibrary = new Map<QualifiedSqlViewName, SqlViewDefinition>();
     }
@@ -19,6 +19,7 @@ export class SqlCheckerEngine {
         console.log("checkChangedSourceFiles");
 
         const before = new Date();
+        console.log("[DIAGNOSTICS START]");
 
         for (const sourceFile of sourceFiles) {
             const views = sqlViewsLibraryAddFromSourceFile(projectDir, sourceFile);
@@ -74,8 +75,9 @@ export class SqlCheckerEngine {
             viewLibrary: sqlViews
         }).then(errors => {
             for (const error of errors) {
-                console.log(codeFrameFormatter(error));
+                console.log(this.formatter(error));
             }
+            console.log("[DIAGNOSTICS END]");
         });
 
         // const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);

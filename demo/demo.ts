@@ -1,46 +1,30 @@
 // import { coolView } from "./blah";
 import { query, sql, defineSqlView, Connection, Req, Opt } from "./lib/sql_linter";
-import { coolView, XXX } from "./helper_views/cool";
-
-const theView = defineSqlView`SELECT 2 AS two`;
-
-const anotherView = defineSqlView`SELECT two FROM ${theView}, ${coolView}`;
-
-function add(x: number, y: number) {
-    return x + y;
-}
-
-const lastView = defineSqlView`SELECT * FROM ${anotherView}`;
 
 export const oneMore = defineSqlView`SELECT 1, 3 as b`;
 
-interface YYY extends XXX {
-    cat: string;
-}
+const employeeName = defineSqlView`SELECT fname AS employee_fname, lname AS lname1 FROM employee WHERE salary > 10`;
 
-function getTheView() {
-    return lastView;
-}
+const employeeName2 = defineSqlView`SELECT employee_fname AS fname, lname1 AS lname FROM ${employeeName}`;
 
-function strange(): string | null {
-    return null;
-}
-
-type Blah = "blah" | null;
-
-function blah(): Blah {
-    return "blah";
-}
-
-const badView = defineSqlView`SELECT 'cool'::TEXT AS num`;
+const badView = defineSqlView`SELECT 'cool' AS num UNION ALL SELECT NULL`;
 
 export async function test() {
-    let theId: string | number = 3 + 2;
-    theId = "hi";
-
     const conn: Connection = null as any;
 
     // const blah: "blah" | null = "blah";
+
+    await query(conn, sql`
+    
+    `);
+
+    await query<{
+        fname: Req<string>,
+        lname: Req<string>
+    }>(conn, sql
+        `
+        SELECT * FROM ${employeeName2}
+        `);
 
     // const rows = await query<{ name: string, age: number }>(conn, sql
     const rows = await query<{

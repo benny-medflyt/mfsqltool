@@ -1,5 +1,5 @@
 [V] progress bar for pg queries
-[ ] "commander" command line parsing
+[V] "commander" command line parsing
 [ ] command line one-shot usage
 [ ] automatically launch temporary postgres server
 [V] fix view caching/checking
@@ -20,4 +20,11 @@
               fname: sql`${}`,
               lname: sql`${fname} || fname`
           }], sql`RETURNING id`);
-[ ] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)
+[/] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)
+
+
+$ initdb -D /tmp/test_sql -N -U test -W
+$ postgres -F -D /tmp/test_sql -p 6432 -s
+
+$ psql -h localhost -p 6432 -U test postgres
+postgres=# CREATE DATABASE test WITH OWNER=test TEMPLATE=template0 ENCODING='UTF8' LC_COLLATE='en_US.utf8' LC_CTYPE='en_US.utf8';

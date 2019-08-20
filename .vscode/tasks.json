@@ -1,0 +1,29 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "mfsqlchecker",
+            "type": "shell",
+            "command": "node ./build/mfsqlchecker/main.js -p demo/ -m migrations/ -u 'postgres://test:test@localhost:6432/test' -d test1 --format vscode",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "mfsqlchecker",
+                "fileLocation": "relative",
+                "background": {
+                    "activeOnStart": false,
+                    "beginsPattern": "\\[DIAGNOSTICS START\\]",
+                    "endsPattern": "\\[DIAGNOSTICS END\\]"
+                },
+                "pattern": {
+                    "regexp": "^\\[DIAGNOSTIC\\] ([^\\s]*) \\((.*)\\) \\((.*)\\) (.*)$",
+                    "file": 1,
+                    "severity": 2,
+                    "location": 3,
+                    "message": 4
+                }
+            }
+        }
+    ]
+}

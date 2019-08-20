@@ -1,5 +1,9 @@
+import { assertNever } from "assert-never";
 import * as commander from "commander";
 import { DbConnector } from "./DbConnector";
+import { ErrorDiagnostic } from "./ErrorDiagnostic";
+import { codeFrameFormatter } from "./formatters/codeFrameFormatter";
+import { vscodeFormatter } from "./formatters/vscodeFormatter";
 import { parsePostgreSqlError } from "./pg_extra";
 import { isTestDatabaseCluster } from "./pg_test_db";
 import { SqlCheckerEngine, TypeScriptWatcher } from "./sqlchecker_engine";
@@ -9,11 +13,34 @@ interface PostgresConnection {
     readonly databaseName: string | undefined;
 }
 
+enum Format {
+    CODE_FRAME,
+    VSCODE
+}
+
 interface Options {
     readonly watchMode: boolean;
     readonly projectDir: string;
     readonly migrationsDir: string;
     readonly postgresConnection: PostgresConnection;
+    readonly format: Format;
+}
+
+export class ParseError extends Error {
+    constructor(public readonly message: string) {
+        super(message);
+    }
+}
+
+function parseFormat(value: string): Format {
+    switch (value) {
+        case "code-frame":
+            return Format.CODE_FRAME;
+        case "vscode":
+            return Format.VSCODE;
+        default:
+            throw new ParseError(`invalid format: "${value}"`);
+    }
 }
 
 function parseOptions(): Options {
@@ -25,9 +52,19 @@ function parseOptions(): Options {
         .option("-p, --project <dir>", "Project directory that should be checked")
         .option("-m, --migrations <dir>", "Migrations directory that should be used")
         .option("-u, --postgres-url <url>", "PostgreSQL connection string")
-        .option("-d, --db-name <name>", "Name of database to use");
+        .option("-d, --db-name <name>", "Name of database to use")
+        .option("-t, --format <format>", "code-frame", parseFormat, Format.CODE_FRAME);
 
-    program.parse(process.argv);
+    try {
+        program.parse(process.argv);
+    } catch (err) {
+        if (err instanceof ParseError) {
+            console.error("error: " + err.message);
+            process.exit(1);
+        } else {
+            throw err;
+        }
+    }
 
     if (process.argv.slice(2).length === 0) {
         program.outputHelp();
@@ -52,9 +89,21 @@ function parseOptions(): Options {
         postgresConnection: {
             url: program.postgresUrl,
             databaseName: program.dbName ? program.dbName : undefined
-        }
+        },
+        format: program.format
     };
     return options;
+}
+
+function formatFunction(format: Format): (errorDiagnostic: ErrorDiagnostic) => string {
+    switch (format) {
+        case Format.CODE_FRAME:
+            return codeFrameFormatter;
+        case Format.VSCODE:
+            return vscodeFormatter;
+        default:
+            return assertNever(format);
+    }
 }
 
 async function main(): Promise<void> {
@@ -89,7 +138,7 @@ async function main(): Promise<void> {
         return process.exit(1);
     }
 
-    const e = new SqlCheckerEngine(dbConnector);
+    const e = new SqlCheckerEngine(dbConnector, formatFunction(options.format));
     const w = new TypeScriptWatcher(e);
     w.run(options.projectDir);
 }
