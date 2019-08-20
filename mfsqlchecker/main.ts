@@ -29,9 +29,14 @@ function parseOptions(): Options {
 
     program.parse(process.argv);
 
+    if (!process.argv.slice(2).length) {
+        program.outputHelp();
+        process.exit(1);
+    }
+
     function required(arg: string, argFlag: string) {
         if (!program[arg]) {
-            console.error(`Missing required argument: ${argFlag}`);
+            console.error(`error: missing required argument: ${argFlag}`);
             process.exit(1);
         }
     }
