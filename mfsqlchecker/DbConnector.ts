@@ -199,7 +199,7 @@ async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], 
     for (let i = oldViews.length - 1; i >= 0; --i) {
         const viewName = oldViews[i];
         if (!newViewNames.has(viewName[0])) {
-            console.log("Dropping view", viewName);
+            console.log("Dropping view", viewName[0]);
             await dropView(client, viewName[0]);
         }
     }
