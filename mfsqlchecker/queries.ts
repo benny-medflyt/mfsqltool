@@ -3,7 +3,6 @@ import chalk from "chalk";
 import * as ts from "typescript";
 import { Either } from "./either";
 import { ErrorDiagnostic, nodeErrorDiagnostic, SrcSpan } from "./ErrorDiagnostic";
-import { isIdentifierFromModule } from "./ts_extra";
 import { QualifiedSqlViewName, resolveViewIdentifier } from "./views";
 
 
@@ -85,25 +84,22 @@ function buildQueryCallExpression(node: ts.CallExpression): QueryCallExpression 
             };
         })();
 
-    if (node.arguments.length < 2) {
+    if (node.arguments.length < 1) {
         return null;
     }
 
-    // node.arguments[0]:  conn
-    // node.arguments[1]:  sql`SELECT age FROM person WHERE id = ${theId}`
-
-    const sqlExp: ts.Expression = node.arguments[1];
+    const sqlExp: ts.Expression = node.arguments[0];
     if (!ts.isTaggedTemplateExpression(sqlExp)) {
         return null;
     }
 
-    if (!ts.isIdentifier(sqlExp.tag)) {
-        return null;
-    }
+    // if (!ts.isIdentifier(sqlExp.tag)) {
+    //     return null;
+    // }
 
-    if (!isIdentifierFromModule(sqlExp.tag, "sql", "./lib/sql_linter")) {
-        return null;
-    }
+    // if (!isIdentifierFromModule(sqlExp.tag, "sql", "./lib/sql_linter")) {
+    //     return null;
+    // }
 
     const sourceFile = node.getSourceFile();
 
@@ -152,16 +148,23 @@ function buildQueryCallExpression(node: ts.CallExpression): QueryCallExpression 
     }
 }
 
-export function findAllQueryCalls(sourceFile: ts.SourceFile): QueryCallExpression[] {
+export function findAllQueryCalls(checker: ts.TypeChecker, sourceFile: ts.SourceFile): QueryCallExpression[] {
     const result: QueryCallExpression[] = [];
+
+    const queryMethodNames = ["query", "queryOne", "queryOneOrNone"];
 
     function visit(node: ts.Node) {
         if (ts.isCallExpression(node)) {
-            if (ts.isIdentifier(node.expression)) {
-                if (isIdentifierFromModule(node.expression, "query", "./lib/sql_linter")) {
-                    const query = buildQueryCallExpression(node);
-                    if (query !== null) {
-                        result.push(query);
+            if (ts.isPropertyAccessExpression(node.expression)) {
+                if (ts.isIdentifier(node.expression.name)) {
+                    if (queryMethodNames.indexOf(node.expression.name.text) >= 0) {
+                        const type = checker.getTypeAtLocation(node.expression.expression);
+                        if (type.getProperty("MfConnectionTypeTag") !== undefined) {
+                            const query = buildQueryCallExpression(node);
+                            if (query !== null) {
+                                result.push(query);
+                            }
+                        }
                     }
                 }
             }
@@ -236,12 +239,17 @@ export const enum ColNullability {
 function typescriptTypeToSqlType(type: ts.Type): SqlType | null {
     if (type.flags === ts.TypeFlags.Null) {
         return SqlType.wrap("");
-    } else if (type.flags === ts.TypeFlags.Boolean || type.flags === ts.TypeFlags.BooleanLiteral) {
-        return SqlType.wrap("boolean");
-    } else if (type.flags === ts.TypeFlags.Number || type.flags === ts.TypeFlags.NumberLiteral) {
-        return SqlType.wrap("int");
-    } else if (type.flags === ts.TypeFlags.String || type.flags === ts.TypeFlags.StringLiteral) {
+    } else if (type.flags & ts.TypeFlags.Boolean || type.flags & ts.TypeFlags.BooleanLiteral) {
+        return SqlType.wrap("bool");
+    } else if (type.flags & ts.TypeFlags.Number || type.flags & ts.TypeFlags.NumberLiteral) {
+        return SqlType.wrap("int4");
+    } else if (type.flags & ts.TypeFlags.String || type.flags & ts.TypeFlags.StringLiteral) {
         return SqlType.wrap("text");
+    }
+
+    // TODO Temporary
+    if (type.symbol.name === "Instant") {
+        return SqlType.wrap("timestamptz");
     }
 
     return null;

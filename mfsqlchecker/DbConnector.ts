@@ -51,6 +51,7 @@ export class DbConnector {
     private dbMigrationsHash: string = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
     private tableColsLibrary = new TableColsLibrary();
+    private pgTypes = new Map<number, string>();
 
     private queryCache = new QueryMap<QueryAnswer>();
 
@@ -86,6 +87,21 @@ export class DbConnector {
             }
 
             await this.tableColsLibrary.refreshTables(this.client);
+
+            this.pgTypes = new Map<number, string>();
+            const pgTypesResult = await this.client.query(
+                `
+                SELECT
+                    oid,
+                    typname
+                FROM pg_type
+                ORDER BY oid
+                `);
+            for (const row of pgTypesResult.rows) {
+                const oid: number = row["oid"];
+                const typname: string = row["typname"];
+                this.pgTypes.set(oid, typname);
+            }
             this.dbMigrationsHash = hash;
         }
 
@@ -129,7 +145,7 @@ export class DbConnector {
                             queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, cachedResult));
                             newQueryCache.set(query.value.text, query.value.colTypes, cachedResult);
                         } else {
-                            const result = await processQuery(this.client, this.tableColsLibrary, query.value);
+                            const result = await processQuery(this.client, this.pgTypes, this.tableColsLibrary, query.value);
                             newQueryCache.set(query.value.text, query.value.colTypes, result);
                             queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, result));
                         }
@@ -377,7 +393,7 @@ function queryAnswerToErrorDiagnostics(query: ResolvedQuery, queryAnswer: QueryA
     }
 }
 
-async function processQuery(client: pg.Client, tableColsLibrary: TableColsLibrary, query: ResolvedQuery): Promise<QueryAnswer> {
+async function processQuery(client: pg.Client, pgTypes: Map<number, string>, tableColsLibrary: TableColsLibrary, query: ResolvedQuery): Promise<QueryAnswer> {
     let fields: pg.FieldDef[] | null;
     try {
         fields = await pgDescribeQuery(client, query.text);
@@ -416,7 +432,7 @@ async function processQuery(client: pg.Client, tableColsLibrary: TableColsLibrar
             };
         }
 
-        const sqlFields = resolveFieldDefs(tableColsLibrary, fields);
+        const sqlFields = resolveFieldDefs(tableColsLibrary, pgTypes, fields);
         if (query.colTypes !== null && stringifyColTypes(query.colTypes) !== stringifyColTypes(sqlFields)) {
             return {
                 type: "WrongColumnTypes",
@@ -430,20 +446,12 @@ async function processQuery(client: pg.Client, tableColsLibrary: TableColsLibrar
     };
 }
 
-function psqlOidSqlType(oid: number): SqlType {
-    switch (oid) {
-        case 20:
-        case 23:
-            return SqlType.wrap("int");
-        case 25:
-            return SqlType.wrap("text");
-        case 13:
-            return SqlType.wrap("boolean");
-        case 1082:
-            return SqlType.wrap("date");
-        default:
-            throw new Error(`TODO psqlOidSqlType oid ${oid}`);
+function psqlOidSqlType(pgTypes: Map<number, string>, oid: number): SqlType {
+    const name = pgTypes.get(oid);
+    if (name === undefined) {
+        throw new Error(`pg_type oid ${oid} not found`);
     }
+    return SqlType.wrap(name);
 }
 
 class TableColsLibrary {
@@ -590,11 +598,11 @@ class TableColsLibrary {
     private viewLookupTable = new Map<string, boolean>();
 }
 
-export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, fields: pg.FieldDef[]): Map<string, [ColNullability, SqlType]> {
+export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, pgTypes: Map<number, string>, fields: pg.FieldDef[]): Map<string, [ColNullability, SqlType]> {
     const result = new Map<string, [ColNullability, SqlType]>();
 
     for (const field of fields) {
-        const sqlType = psqlOidSqlType(field.dataTypeID);
+        const sqlType = psqlOidSqlType(pgTypes, field.dataTypeID);
         let colNullability: ColNullability = ColNullability.OPT;
         if (field.tableID > 0) {
             const notNull = tableColsLibrary.isNotNull(field.tableID, field.columnID);
@@ -610,11 +618,16 @@ export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, fields: pg.
 
 function sqlTypeToTypeScriptType(sqlType: SqlType): string {
     switch (SqlType.unwrap(sqlType)) {
-        case "int":
+        // TODO TEMPORARY This should be loaded from a json file passwed through the command line
+        case "timestamptz":
+            return "Instant";
+        case "int2":
+        case "int4":
+        case "int8":
             return "number";
         case "text":
             return "string";
-        case "boolean":
+        case "bool":
             return "boolean";
         case "date":
             return "LocalDate";

@@ -1,20 +1,10 @@
 import { assertNever } from "assert-never";
-import * as crypto from "crypto";
 import * as path from "path";
 import * as ts from "typescript";
 import { Either } from "./either";
 import { ErrorDiagnostic, nodeErrorDiagnostic } from "./ErrorDiagnostic";
 import { identifierImportedFrom, isIdentifierFromModule, ModuleId } from "./ts_extra";
-
-function calcViewName(varName: string | null, query: string): string {
-    const hash = crypto.createHash("sha1").update(query).digest("hex");
-
-    const viewName = varName !== null
-        ? "view_" + varName.split(/(?=[A-Z])/).join("_").toLowerCase() + "_" + hash.slice(0, 12)
-        : "view_" + hash.slice(0, 12);
-
-    return viewName;
-}
+import { calcViewName } from "./view_names";
 
 function viewNameLength(varName: string | null): number {
     return calcViewName(varName, "").length;

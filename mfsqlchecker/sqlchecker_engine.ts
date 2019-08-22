@@ -55,7 +55,7 @@ export class SqlCheckerEngine {
 
         let queries: QueryCallExpression[] = [];
         for (const sourceFile of progSourceFiles) {
-            queries = queries.concat(findAllQueryCalls(sourceFile));
+            queries = queries.concat(findAllQueryCalls(checker, sourceFile));
         }
 
         const lookupViewName = (qualifiedSqlViewName: QualifiedSqlViewName): string | undefined => {

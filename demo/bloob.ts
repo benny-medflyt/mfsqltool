@@ -1,9 +1,9 @@
-import { query, sql, Connection, Req, Opt } from "./lib/sql_linter";
+import { Connection, Req, Opt, sql } from "./lib/mfsqltool";
 
 export async function bloob() {
     const conn: Connection = null as any;
 
-    const rows = await query<{
+    const rows = await conn.query<{
         fname: Req<string>,
         lname: Req<string>,
         phonenumber: Opt<string>,
@@ -11,7 +11,7 @@ export async function bloob() {
         manager_id: Opt<number>,
         managername: Req<string>
     }
-    >(conn, sql
+    >(sql
         `
         SELECT
             employee.fname,
@@ -27,14 +27,15 @@ export async function bloob() {
         `);
 
 
-    await query<{
-        customer_id: Req<number>,
+    await conn.query<{
         id: Req<number>,
+        customer_id: Req<number>,
         employee_id: Req<number>,
         model: Req<string>,
         status: Req<string>,
         total_cost: Req<number>
-    }>(conn, sql
+    }
+    >(sql
         ` SELECT * FROM car
         `);
 

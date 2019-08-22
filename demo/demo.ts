@@ -1,5 +1,6 @@
+import { defineSqlView, Connection, sql, Req, Opt } from "./lib/mfsqltool";
+
 // import { coolView } from "./blah";
-import { query, sql, defineSqlView, Connection, Req, Opt } from "./lib/sql_linter";
 
 export const oneMore = defineSqlView`SELECT 1, 3 as b`;
 
@@ -14,20 +15,20 @@ export async function test() {
 
     // const blah: "blah" | null = "blah";
 
-    await query(conn, sql`
+    await conn.query(sql`
     
     `);
 
-    await query<{
+    await conn.query<{
         fname: Req<string>,
         lname: Req<string>
-    }>(conn, sql
+    }>(sql
         `
         SELECT * FROM ${employeeName2}
         `);
 
     // const rows = await query<{ name: string, age: number }>(conn, sql
-    const rows = await query<{
+    const rows = await conn.query<{
         fname: Req<string>,
         lname: Req<string>,
         phonenumber: Opt<string>,
@@ -35,7 +36,7 @@ export async function test() {
         manager_id: Opt<number>,
         managername: Req<string>,
         badViewNum: Opt<string>
-    }>(conn, sql
+    }>(sql
         `
         SELECT
             employee.fname,
@@ -54,14 +55,14 @@ export async function test() {
         `);
 
 
-    await query<{
+    await conn.query<{
         customer_id: Req<number>,
         id: Req<number>,
         employee_id: Req<number>,
         model: Req<string>,
         status: Req<string>,
         total_cost: Req<number>
-    }>(conn, sql
+    }>(sql
         ` SELECT * FROM car
         `);
 
