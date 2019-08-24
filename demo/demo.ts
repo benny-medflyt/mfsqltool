@@ -1,4 +1,5 @@
 import { defineSqlView, Connection, sql, Req, Opt } from "./lib/mfsqltool";
+import { EmployeeId, CarId, CustomerId } from "./types";
 
 // import { coolView } from "./blah";
 
@@ -27,13 +28,24 @@ export async function test() {
         SELECT * FROM ${employeeName2}
         `);
 
+    const employees = await conn.query<{
+        id: Req<EmployeeId>
+    }>(sql
+        `
+        SELECT
+            id
+        FROM
+            employee
+        WHERE salary > ${5}
+        `);
+
     // const rows = await query<{ name: string, age: number }>(conn, sql
     const rows = await conn.query<{
         fname: Req<string>,
         lname: Req<string>,
         phonenumber: Opt<string>,
         salary: Req<number>,
-        manager_id: Opt<number>,
+        manager_id: Opt<EmployeeId>,
         managername: Req<string>,
         badViewNum: Opt<string>
     }>(sql
@@ -51,14 +63,15 @@ export async function test() {
         INNER JOIN ${badView} ON employee.fname = ${badView}.num
         LEFT JOIN employee e ON employee.manager_id = e.id
         WHERE employee.fname = ${"alice"}
-        AND employee.salary = ${5}
+        AND employee.salary = ${3}
+        AND employee.id = ${employees[0].id.val()}
         `);
 
 
     await conn.query<{
-        customer_id: Req<number>,
-        id: Req<number>,
-        employee_id: Req<number>,
+        id: Req<CarId>,
+        customer_id: Req<CustomerId>,
+        employee_id: Req<EmployeeId>,
         model: Req<string>,
         status: Req<string>,
         total_cost: Req<number>

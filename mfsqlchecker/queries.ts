@@ -33,7 +33,7 @@ export interface ResolvedQuery {
      * indicating that we are requested not to type-check the return column
      * types
      */
-    readonly colTypes: Map<string, [ColNullability, SqlType]> | null;
+    readonly colTypes: Map<string, [ColNullability, TypeScriptType]> | null;
 
     readonly colTypeSpan: SrcSpan;
 
@@ -216,6 +216,18 @@ export function nonNullType(type: ts.Type): ts.Type {
     }
 }
 
+export class TypeScriptType {
+    static wrap(val: string): TypeScriptType {
+        return val as any;
+    }
+
+    static unwrap(val: TypeScriptType): string {
+        return val as any;
+    }
+
+    protected _dummy: TypeScriptType[];
+}
+
 export class SqlType {
     static wrap(val: string): SqlType {
         return val as any;
@@ -236,15 +248,24 @@ export const enum ColNullability {
 /**
  * @returns Empty string means SQL "NULL" literal. `null` means an error
  */
-function typescriptTypeToSqlType(type: ts.Type): SqlType | null {
+function typescriptTypeToSqlType(typeScriptUniqueColumnTypes: Map<TypeScriptType, SqlType>, type: ts.Type): SqlType | null {
     if (type.flags === ts.TypeFlags.Null) {
         return SqlType.wrap("");
-    } else if (type.flags & ts.TypeFlags.Boolean || type.flags & ts.TypeFlags.BooleanLiteral) {
+    } else if ((type.flags & ts.TypeFlags.Boolean) !== 0 || (type.flags & ts.TypeFlags.BooleanLiteral) !== 0) { // tslint:disable-line:no-bitwise
         return SqlType.wrap("bool");
-    } else if (type.flags & ts.TypeFlags.Number || type.flags & ts.TypeFlags.NumberLiteral) {
+    } else if ((type.flags & ts.TypeFlags.Number) !== 0 || (type.flags & ts.TypeFlags.NumberLiteral) !== 0) { // tslint:disable-line:no-bitwise
         return SqlType.wrap("int4");
-    } else if (type.flags & ts.TypeFlags.String || type.flags & ts.TypeFlags.StringLiteral) {
+    } else if ((type.flags & ts.TypeFlags.String) !== 0 || (type.flags & ts.TypeFlags.StringLiteral) !== 0) { // tslint:disable-line:no-bitwise
         return SqlType.wrap("text");
+    }
+
+    if (type.symbol === undefined) {
+        throw new Error("TODO figure out when this happens");
+    }
+
+    const sqlType = typeScriptUniqueColumnTypes.get(TypeScriptType.wrap(type.symbol.name));
+    if (sqlType !== undefined) {
+        return sqlType;
     }
 
     // TODO Temporary
@@ -254,6 +275,24 @@ function typescriptTypeToSqlType(type: ts.Type): SqlType | null {
 
     return null;
 }
+
+function readTypeScriptType(checker: ts.TypeChecker, type: ts.Type): TypeScriptType | null {
+    if ((type.flags & ts.TypeFlags.Any) !== 0) { // tslint:disable-line:no-bitwise
+        // TODO hm....
+        return TypeScriptType.wrap("any");
+    } else if ((type.flags & ts.TypeFlags.Null) !== 0) { // tslint:disable-line:no-bitwise
+        return TypeScriptType.wrap("null");
+    } else if ((type.flags & ts.TypeFlags.Boolean) !== 0 || (type.flags & ts.TypeFlags.BooleanLiteral) !== 0) { // tslint:disable-line:no-bitwise
+        return TypeScriptType.wrap("boolean");
+    } else if ((type.flags & ts.TypeFlags.Number) !== 0 || (type.flags & ts.TypeFlags.NumberLiteral) !== 0) { // tslint:disable-line:no-bitwise
+        return TypeScriptType.wrap("number");
+    } else if ((type.flags & ts.TypeFlags.String) !== 0 || (type.flags & ts.TypeFlags.StringLiteral) !== 0) { // tslint:disable-line:no-bitwise
+        return TypeScriptType.wrap("string");
+    }
+
+    return TypeScriptType.wrap(checker.typeToString(type));
+}
+
 
 function getColNullability(symbol: ts.Symbol): ColNullability | null {
     // This just does a crude string comparison on the "name". It is not robst
@@ -273,8 +312,8 @@ function getColNullability(symbol: ts.Symbol): ColNullability | null {
     }
 }
 
-function typescriptRowTypeToSqlTypes(checker: ts.TypeChecker, typeLiteral: ts.TypeLiteralNode, errorReporter: (error: ErrorDiagnostic) => void): Map<string, [ColNullability, SqlType]> {
-    const results = new Map<string, [ColNullability, SqlType]>();
+function typescriptRowTypeToColTypes(checker: ts.TypeChecker, typeLiteral: ts.TypeLiteralNode, errorReporter: (error: ErrorDiagnostic) => void): Map<string, [ColNullability, TypeScriptType]> {
+    const results = new Map<string, [ColNullability, TypeScriptType]>();
     for (const member of typeLiteral.members) {
         if (!ts.isPropertySignature(member)) {
             errorReporter(nodeErrorDiagnostic(member, "Type argument member must be a property"));
@@ -298,11 +337,11 @@ function typescriptRowTypeToSqlTypes(checker: ts.TypeChecker, typeLiteral: ts.Ty
                                 errorReporter(nodeErrorDiagnostic(member, `Invalid type for property "${member.name.text}", it must be \`Req<T>\` or \`Opt<T>\``));
                             } else {
                                 const typeArgument = typeArguments[0];
-                                const sqlType = typescriptTypeToSqlType(typeArgument);
-                                if (sqlType === null) {
+                                const type = readTypeScriptType(checker, typeArgument);
+                                if (type === null) {
                                     errorReporter(nodeErrorDiagnostic(member, `Invalid type for property "${member.name.text}": ${checker.typeToString(typeArgument)}`));
                                 } else {
-                                    results.set(member.name.text, [colNullability, sqlType]);
+                                    results.set(member.name.text, [colNullability, type]);
                                 }
                             }
                         }
@@ -314,7 +353,7 @@ function typescriptRowTypeToSqlTypes(checker: ts.TypeChecker, typeLiteral: ts.Ty
     return results;
 }
 
-export function resolveQueryFragment(projectDir: string, checker: ts.TypeChecker, query: QueryCallExpression, lookupViewName: (qualifiedSqlViewName: QualifiedSqlViewName) => string | undefined): Either<ErrorDiagnostic[], ResolvedQuery> {
+export function resolveQueryFragment(typeScriptUniqueColumnTypes: Map<TypeScriptType, SqlType>, projectDir: string, checker: ts.TypeChecker, query: QueryCallExpression, lookupViewName: (qualifiedSqlViewName: QualifiedSqlViewName) => string | undefined): Either<ErrorDiagnostic[], ResolvedQuery> {
     const errors: ErrorDiagnostic[] = [];
 
     let text = "";
@@ -341,14 +380,14 @@ export function resolveQueryFragment(projectDir: string, checker: ts.TypeChecker
                         }
                     }
                 } else {
-                    const sqlType = typescriptTypeToSqlType(nonNullType(type));
+                    const sqlType = typescriptTypeToSqlType(typeScriptUniqueColumnTypes, nonNullType(type));
                     if (sqlType === null) {
                         const typeStr = checker.typeToString(type, frag.exp);
                         errors.push(nodeErrorDiagnostic(frag.exp, `Invalid type for SQL parameter: ${typeStr}`));
                     } else {
                         numParams++;
                         const sqlTypeStr = SqlType.unwrap(sqlType);
-                        text += "($" + numParams + (sqlTypeStr !== "" ? "::" + sqlTypeStr : "") + ")";
+                        text += "($" + numParams + (sqlTypeStr !== "" ? "::" + "\"" + sqlTypeStr + "\"" : "") + ")";
                     }
                 }
                 break;
@@ -358,21 +397,21 @@ export function resolveQueryFragment(projectDir: string, checker: ts.TypeChecker
     }
 
     if (errors.length === 0) {
-        let colTypes: Map<string, [ColNullability, SqlType]> | null;
+        let colTypes: Map<string, [ColNullability, TypeScriptType]> | null;
         if (query.typeArgument === null) {
             // If no type argument was specified, then for our purposes it is
             // equivalent to <{}>
-            colTypes = new Map<string, [ColNullability, SqlType]>();
+            colTypes = new Map<string, [ColNullability, TypeScriptType]>();
         } else {
             if (ts.isTypeLiteralNode(query.typeArgument)) {
-                colTypes = typescriptRowTypeToSqlTypes(checker, query.typeArgument, e => errors.push(e));
+                colTypes = typescriptRowTypeToColTypes(checker, query.typeArgument, e => errors.push(e));
                 // } else if ( ... TODO handle case of `query<any>(...)` and set colTypes = null
             } else {
                 // TODO We should enhance `typescriptRowTypeToSqlTypes` so
                 // that it also handles interface types, type aliases, and
                 // maybe also some sensible scenarios
                 errors.push(nodeErrorDiagnostic(query.typeArgument, "Type argument must be a Type Literal"));
-                colTypes = new Map<string, [ColNullability, SqlType]>();
+                colTypes = new Map<string, [ColNullability, TypeScriptType]>();
             }
         }
 

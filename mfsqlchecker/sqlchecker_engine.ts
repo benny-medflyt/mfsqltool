@@ -1,13 +1,16 @@
 import "source-map-support/register"; // tslint:disable-line:no-import-side-effect
 
+import { assertNever } from "assert-never";
+import * as fs from "fs";
 import * as ts from "typescript";
 import { DbConnector } from "./DbConnector";
 import { ErrorDiagnostic } from "./ErrorDiagnostic";
-import { findAllQueryCalls, QueryCallExpression, resolveQueryFragment } from "./queries";
+import { findAllQueryCalls, QueryCallExpression, resolveQueryFragment, SqlType, TypeScriptType } from "./queries";
+import { parseUniqueTableColumnTypeFile, sqlUniqueTypeName, UniqueTableColumnType } from "./unique_table_column_types";
 import { QualifiedSqlViewName, resolveAllViewDefinitions, sourceFileModuleName, SqlViewDefinition, sqlViewLibraryResetToInitialFragmentsIncludingDeps, sqlViewsLibraryAddFromSourceFile } from "./views";
 
 export class SqlCheckerEngine {
-    constructor(private readonly dbConnector: DbConnector, private readonly formatter: (errorDiagnostic: ErrorDiagnostic) => string) {
+    constructor(private readonly uniqueTableColumnTypesFile: string | null, private readonly dbConnector: DbConnector, private readonly formatter: (errorDiagnostic: ErrorDiagnostic) => string) {
         // TODO ...
         this.viewLibrary = new Map<QualifiedSqlViewName, SqlViewDefinition>();
     }
@@ -66,7 +69,27 @@ export class SqlCheckerEngine {
             return v.getName();
         };
 
-        const resolvedQueries = queries.map(q => resolveQueryFragment(projectDir, checker, q, lookupViewName));
+        let uniqueTableColumnTypes: UniqueTableColumnType[] = [];
+        if (this.uniqueTableColumnTypesFile !== null) {
+            const fileContents = fs.readFileSync(this.uniqueTableColumnTypesFile, { encoding: "utf8" });
+            const result = parseUniqueTableColumnTypeFile(this.uniqueTableColumnTypesFile, fileContents);
+            switch (result.type) {
+                case "Left":
+                    throw new Error("TODO !!! ....");
+                case "Right":
+                    uniqueTableColumnTypes = result.value;
+                    break;
+                default:
+                    return assertNever(result);
+            }
+        }
+
+        const typeScriptUniqueColumnTypes = new Map<TypeScriptType, SqlType>();
+        for (const uniqueTableColumnType of uniqueTableColumnTypes) {
+            typeScriptUniqueColumnTypes.set(uniqueTableColumnType.typeScriptTypeName, SqlType.wrap(sqlUniqueTypeName(uniqueTableColumnType.tableName, uniqueTableColumnType.columnName)));
+        }
+
+        const resolvedQueries = queries.map(q => resolveQueryFragment(typeScriptUniqueColumnTypes, projectDir, checker, q, lookupViewName));
 
         // console.log(resolvedQueries);
 

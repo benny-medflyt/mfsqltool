@@ -8,6 +8,7 @@ Static Checker:
 [ ] change view exceptions to ErrorDiagnostic
 [ ] "hold" system for blocking/releasing updates when promise is running async. also maybe "cancellation token" system (for prematurely stopping currently running async task -- don't stop migrations or views, only stop queries)
 [/] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)
+[ ] mess with pg_cast table to prevent liberal assignments of any value to TEXT columns
 
 Run-time Library:
 

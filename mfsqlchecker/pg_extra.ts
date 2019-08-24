@@ -184,6 +184,22 @@ export async function dropAllTables(client: pg.Client) {
         `);
 }
 
+export async function dropAllTypes(client: pg.Client) {
+    await client.query(
+        `
+        DO $$ DECLARE
+            r RECORD;
+        BEGIN
+            -- if the schema you operate on is not "current", you will want to
+            -- replace current_schema() in query with 'schematodeletetablesfrom'
+            -- *and* update the generate 'DROP...' accordingly.
+            FOR r IN (SELECT pg_type.typname FROM pg_type, pg_namespace WHERE pg_namespace.oid = pg_type.typnamespace AND pg_namespace.nspname = current_schema()) LOOP
+                EXECUTE 'DROP TYPE IF EXISTS ' || quote_ident(r.typname) || ' CASCADE';
+            END LOOP;
+        END $$;
+        `);
+}
+
 /**
  * Checks if `err` is a PostgreSQL error, and returns the error code.
  *

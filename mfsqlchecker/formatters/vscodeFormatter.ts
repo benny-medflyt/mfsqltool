@@ -11,7 +11,7 @@ export function vscodeFormatter(errorDiagnostic: ErrorDiagnostic): string {
 
     // VSCode recognizeds "error", "warning", "info"
     // Reference: <https://code.visualstudio.com/docs/editor/tasks-appendix>
-    const severity = "error";
+    const severity = "warning";
     function addLine(msg: string) {
         result += "[DIAGNOSTIC] " + filename + " (" + severity + ") " + loc + " " + msg + "\n";
 

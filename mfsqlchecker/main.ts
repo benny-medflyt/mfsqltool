@@ -1,3 +1,5 @@
+import "source-map-support/register"; // tslint:disable-line:no-import-side-effect
+
 import { assertNever } from "assert-never";
 import * as commander from "commander";
 import { DbConnector } from "./DbConnector";
@@ -22,6 +24,7 @@ interface Options {
     readonly watchMode: boolean;
     readonly projectDir: string;
     readonly migrationsDir: string;
+    readonly uniqueTableColumnTypesFile: string | null;
     readonly postgresConnection: PostgresConnection;
     readonly format: Format;
 }
@@ -51,6 +54,7 @@ function parseOptions(): Options {
         .option("-w, --watch", "watch mode")
         .option("-p, --project <dir>", "Project directory that should be checked")
         .option("-m, --migrations <dir>", "Migrations directory that should be used")
+        .option("-c, --unique-cols <file>", "Unique table column types file")
         .option("-u, --postgres-url <url>", "PostgreSQL connection string")
         .option("-d, --db-name <name>", "Name of database to use")
         .option("-t, --format <format>", "code-frame", parseFormat, Format.CODE_FRAME);
@@ -86,6 +90,7 @@ function parseOptions(): Options {
         watchMode: program.watch === true,
         projectDir: program.project,
         migrationsDir: program.migrations,
+        uniqueTableColumnTypesFile: program.uniqueCols ? program.uniqueCols : null,
         postgresConnection: {
             url: program.postgresUrl,
             databaseName: program.dbName ? program.dbName : undefined
@@ -116,7 +121,7 @@ async function main(): Promise<void> {
 
     let dbConnector: DbConnector;
     try {
-        dbConnector = await DbConnector.Connect(options.migrationsDir, options.postgresConnection.url, options.postgresConnection.databaseName);
+        dbConnector = await DbConnector.Connect(options.migrationsDir, options.uniqueTableColumnTypesFile, options.postgresConnection.url, options.postgresConnection.databaseName);
     } catch (err) {
         const perr = parsePostgreSqlError(err);
         if (perr !== null) {
@@ -138,7 +143,7 @@ async function main(): Promise<void> {
         return process.exit(1);
     }
 
-    const e = new SqlCheckerEngine(dbConnector, formatFunction(options.format));
+    const e = new SqlCheckerEngine(options.uniqueTableColumnTypesFile, dbConnector, formatFunction(options.format));
     const w = new TypeScriptWatcher(e);
     w.run(options.projectDir);
 }

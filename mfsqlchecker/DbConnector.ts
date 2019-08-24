@@ -6,10 +6,11 @@ import * as path from "path";
 import * as pg from "pg";
 import { Either } from "./either";
 import { ErrorDiagnostic, postgresqlErrorDiagnostic, SrcSpan, toSrcSpan } from "./ErrorDiagnostic";
-import { closePg, connectPg, dropAllTables, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
+import { closePg, connectPg, dropAllTables, dropAllTypes, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
 import { calcDbMigrationsHash, connReplaceDbName, createBlankDatabase, dropDatabase, isMigrationFile, readdirAsync, testDatabaseName } from "./pg_test_db";
-import { ColNullability, ResolvedQuery, SqlType } from "./queries";
+import { ColNullability, ResolvedQuery, SqlType, TypeScriptType } from "./queries";
 import { resolveFromSourceMap } from "./source_maps";
+import { makeUniqueColumnTypes, parseUniqueTableColumnTypeFile, sqlUniqueTypeName, UniqueTableColumnType } from "./unique_table_column_types";
 import { QualifiedSqlViewName, SqlCreateView } from "./views";
 
 export interface Manifest {
@@ -32,18 +33,21 @@ namespace QueryCheckResult {
 }
 
 export class DbConnector {
-    private constructor(migrationsDir: string, client: pg.Client) {
+    // TODO !!!! The "uniqueTableColumnTypesFile" param should be removed. Instead send the parsed data in the Manifest (This class will internally store a hash of the previous val to determine if it needs to regen the stuff)
+    private constructor(migrationsDir: string, uniqueTableColumnTypesFile: string | null, client: pg.Client) {
         this.migrationsDir = migrationsDir;
+        this.uniqueTableColumnTypesFile = uniqueTableColumnTypesFile;
         this.client = client;
         pgMonkeyPatchClient(this.client);
     }
 
-    static async Connect(migrationsDir: string, adminUrl: string, name?: string): Promise<DbConnector> {
+    static async Connect(migrationsDir: string, uniqueTableColumnTypesFile: string | null, adminUrl: string, name?: string): Promise<DbConnector> {
         const client = await newConnect(adminUrl, name);
-        return new DbConnector(migrationsDir, client);
+        return new DbConnector(migrationsDir, uniqueTableColumnTypesFile, client);
     }
 
     private migrationsDir: string;
+    private uniqueTableColumnTypesFile: string | null;
     private client: pg.Client;
 
     private viewNames: [string, ViewAnswer][] = [];
@@ -51,7 +55,8 @@ export class DbConnector {
     private dbMigrationsHash: string = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
     private tableColsLibrary = new TableColsLibrary();
-    private pgTypes = new Map<number, string>();
+    private pgTypes = new Map<number, SqlType>();
+    private uniqueColumnTypes = new Map<SqlType, TypeScriptType>();
 
     private queryCache = new QueryMap<QueryAnswer>();
 
@@ -67,6 +72,7 @@ export class DbConnector {
             this.viewNames = [];
 
             await dropAllTables(this.client);
+            await dropAllTypes(this.client);
 
             const allFiles = await readdirAsync(this.migrationsDir);
             const matchingFiles = allFiles.filter(isMigrationFile).sort();
@@ -86,9 +92,29 @@ export class DbConnector {
                 }
             }
 
+            if (this.uniqueTableColumnTypesFile !== null) {
+                const fileContents = await readFileAsync(this.uniqueTableColumnTypesFile);
+                const result = parseUniqueTableColumnTypeFile(this.uniqueTableColumnTypesFile, fileContents);
+                let uniqueTableColumnTypes: UniqueTableColumnType[];
+                switch (result.type) {
+                    case "Left":
+                        const errorDiagnostic: ErrorDiagnostic = result.value;
+                        return [errorDiagnostic];
+                    case "Right":
+                        uniqueTableColumnTypes = result.value;
+                        break;
+                    default:
+                        return assertNever(result);
+                }
+
+                this.uniqueColumnTypes = makeUniqueColumnTypes(uniqueTableColumnTypes);
+
+                await applyUniqueTableColumnTypes(this.client, uniqueTableColumnTypes);
+            }
+
             await this.tableColsLibrary.refreshTables(this.client);
 
-            this.pgTypes = new Map<number, string>();
+            this.pgTypes = new Map<number, SqlType>();
             const pgTypesResult = await this.client.query(
                 `
                 SELECT
@@ -100,7 +126,7 @@ export class DbConnector {
             for (const row of pgTypesResult.rows) {
                 const oid: number = row["oid"];
                 const typname: string = row["typname"];
-                this.pgTypes.set(oid, typname);
+                this.pgTypes.set(oid, SqlType.wrap(typname));
             }
             this.dbMigrationsHash = hash;
         }
@@ -145,7 +171,7 @@ export class DbConnector {
                             queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, cachedResult));
                             newQueryCache.set(query.value.text, query.value.colTypes, cachedResult);
                         } else {
-                            const result = await processQuery(this.client, this.pgTypes, this.tableColsLibrary, query.value);
+                            const result = await processQuery(this.client, this.pgTypes, this.tableColsLibrary, this.uniqueColumnTypes, query.value);
                             newQueryCache.set(query.value.text, query.value.colTypes, result);
                             queryErrors = queryErrors.concat(queryAnswerToErrorDiagnostics(query.value, result));
                         }
@@ -310,11 +336,11 @@ function viewAnswerToErrorDiagnostics(createView: SqlCreateView, viewAnswer: Vie
  * Type safe "Map"-like from queries to some T
  */
 class QueryMap<T> {
-    set(text: string, colTypes: Map<string, [ColNullability, SqlType]> | null, value: T): void {
+    set(text: string, colTypes: Map<string, [ColNullability, TypeScriptType]> | null, value: T): void {
         this.internalMap.set(QueryMap.toKey(text, colTypes), value);
     }
 
-    get(text: string, colTypes: Map<string, [ColNullability, SqlType]> | null): T | undefined {
+    get(text: string, colTypes: Map<string, [ColNullability, TypeScriptType]> | null): T | undefined {
         return this.internalMap.get(QueryMap.toKey(text, colTypes));
     }
 
@@ -322,7 +348,7 @@ class QueryMap<T> {
         this.internalMap = new Map<string, T>();
     }
 
-    private static toKey(text: string, colTypes: Map<string, [ColNullability, SqlType]> | null): string {
+    private static toKey(text: string, colTypes: Map<string, [ColNullability, TypeScriptType]> | null): string {
         // TODO Will this really always give a properly unique key?
         return text + (colTypes === null ? "" : stringifyColTypes(colTypes));
     }
@@ -393,7 +419,7 @@ function queryAnswerToErrorDiagnostics(query: ResolvedQuery, queryAnswer: QueryA
     }
 }
 
-async function processQuery(client: pg.Client, pgTypes: Map<number, string>, tableColsLibrary: TableColsLibrary, query: ResolvedQuery): Promise<QueryAnswer> {
+async function processQuery(client: pg.Client, pgTypes: Map<number, SqlType>, tableColsLibrary: TableColsLibrary, uniqueColumnTypes: Map<SqlType, TypeScriptType>, query: ResolvedQuery): Promise<QueryAnswer> {
     let fields: pg.FieldDef[] | null;
     try {
         fields = await pgDescribeQuery(client, query.text);
@@ -432,7 +458,7 @@ async function processQuery(client: pg.Client, pgTypes: Map<number, string>, tab
             };
         }
 
-        const sqlFields = resolveFieldDefs(tableColsLibrary, pgTypes, fields);
+        const sqlFields = resolveFieldDefs(tableColsLibrary, pgTypes, uniqueColumnTypes, fields);
         if (query.colTypes !== null && stringifyColTypes(query.colTypes) !== stringifyColTypes(sqlFields)) {
             return {
                 type: "WrongColumnTypes",
@@ -446,12 +472,12 @@ async function processQuery(client: pg.Client, pgTypes: Map<number, string>, tab
     };
 }
 
-function psqlOidSqlType(pgTypes: Map<number, string>, oid: number): SqlType {
+function psqlOidSqlType(pgTypes: Map<number, SqlType>, oid: number): SqlType {
     const name = pgTypes.get(oid);
     if (name === undefined) {
         throw new Error(`pg_type oid ${oid} not found`);
     }
-    return SqlType.wrap(name);
+    return name;
 }
 
 class TableColsLibrary {
@@ -598,8 +624,8 @@ class TableColsLibrary {
     private viewLookupTable = new Map<string, boolean>();
 }
 
-export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, pgTypes: Map<number, string>, fields: pg.FieldDef[]): Map<string, [ColNullability, SqlType]> {
-    const result = new Map<string, [ColNullability, SqlType]>();
+export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, pgTypes: Map<number, SqlType>, uniqueColumnTypes: Map<SqlType, TypeScriptType>, fields: pg.FieldDef[]): Map<string, [ColNullability, TypeScriptType]> {
+    const result = new Map<string, [ColNullability, TypeScriptType]>();
 
     for (const field of fields) {
         const sqlType = psqlOidSqlType(pgTypes, field.dataTypeID);
@@ -610,30 +636,33 @@ export function resolveFieldDefs(tableColsLibrary: TableColsLibrary, pgTypes: Ma
                 colNullability = ColNullability.REQ;
             }
         }
-        result.set(field.name, [colNullability, sqlType]);
+        const typeScriptType = sqlTypeToTypeScriptType(uniqueColumnTypes, sqlType);
+        result.set(field.name, [colNullability, typeScriptType]);
     }
 
     return result;
 }
 
-function sqlTypeToTypeScriptType(sqlType: SqlType): string {
+function sqlTypeToTypeScriptType(uniqueColumnTypes: Map<SqlType, TypeScriptType>, sqlType: SqlType): TypeScriptType {
     switch (SqlType.unwrap(sqlType)) {
-        // TODO TEMPORARY This should be loaded from a json file passwed through the command line
-        case "timestamptz":
-            return "Instant";
         case "int2":
         case "int4":
         case "int8":
-            return "number";
+            return TypeScriptType.wrap("number");
         case "text":
-            return "string";
+            return TypeScriptType.wrap("string");
         case "bool":
-            return "boolean";
-        case "date":
-            return "LocalDate";
+            return TypeScriptType.wrap("boolean");
         default:
-            throw new Error(`TODO sqlTypeToTypeScriptType ${sqlType}`);
     }
+
+    const uniqueType = uniqueColumnTypes.get(sqlType);
+
+    if (uniqueType !== undefined) {
+        return uniqueType;
+    }
+
+    throw new Error(`TODO sqlTypeToTypeScriptType ${sqlType}`);
 }
 
 function colNullabilityStr(colNullability: ColNullability): string {
@@ -653,7 +682,7 @@ function renderIdentifier(ident: string): string {
     return ident;
 }
 
-function renderColTypesType(colTypes: Map<string, [ColNullability, SqlType]>): string {
+function renderColTypesType(colTypes: Map<string, [ColNullability, TypeScriptType]>): string {
     if (colTypes.size === 0) {
         return "{}";
     }
@@ -662,7 +691,7 @@ function renderColTypesType(colTypes: Map<string, [ColNullability, SqlType]>): s
 
     colTypes.forEach((value, key) => {
 
-        result += `  ${renderIdentifier(key)}: ${colNullabilityStr(value[0])}<${sqlTypeToTypeScriptType(value[1])}>,\n`;
+        result += `  ${renderIdentifier(key)}: ${colNullabilityStr(value[0])}<${TypeScriptType.unwrap(value[1])}>,\n`;
     });
 
     // Remove trailing comma
@@ -675,7 +704,7 @@ function renderColTypesType(colTypes: Map<string, [ColNullability, SqlType]>): s
 /**
  * Will return a canonical representation, that can be used for comparisons
  */
-function stringifyColTypes(colTypes: Map<string, [ColNullability, SqlType]>): string {
+function stringifyColTypes(colTypes: Map<string, [ColNullability, TypeScriptType]>): string {
     const keys = [...colTypes.keys()];
     keys.sort();
     let result = "";
@@ -719,4 +748,114 @@ function readFileAsync(fileName: string): Promise<string> {
             }
         });
     });
+}
+
+interface TableColumn {
+    tableOid: number;
+    colAttnum: number;
+    typeName: string;
+}
+
+async function queryTableColumn(client: pg.Client, tableName: string, columnName: string): Promise<TableColumn | null> {
+    const result = await client.query(
+        `
+        SELECT
+        pg_class.oid AS tbloid,
+        pg_attribute.attnum AS attnum,
+        pg_type.typname AS typname
+        FROM
+        pg_attribute,
+        pg_class,
+        pg_type
+        WHERE TRUE
+        AND pg_class.oid = pg_attribute.attrelid
+        AND pg_type.oid = pg_attribute.atttypid
+        AND pg_class.relname = $1
+        AND pg_attribute.attname = $2
+        `, [tableName, columnName]);
+
+    if (result.rows.length === 0) {
+        return null;
+    } else if (result.rows.length > 1) {
+        throw new Error(`Multiple pg_attribute results found for Table "${tableName}" Column "${columnName}"`);
+    }
+
+    return {
+        tableOid: result.rows[0].tbloid,
+        colAttnum: result.rows[0].attnum,
+        typeName: result.rows[0].typname
+    };
+}
+
+export async function applyUniqueTableColumnTypes(client: pg.Client, uniqueTableColumnTypes: UniqueTableColumnType[]): Promise<void> {
+    for (const uniqueTableColumnType of uniqueTableColumnTypes) {
+        const tableColumn = await queryTableColumn(client, uniqueTableColumnType.tableName, uniqueTableColumnType.columnName);
+
+        if (tableColumn !== null) {
+
+            const queryResult = await client.query(
+                `
+                SELECT
+                    pg_constraint.conname,
+                    sc.relname,
+                    sa.attname
+                FROM
+                    pg_constraint,
+                    pg_class sc,
+                    pg_attribute sa,
+                    pg_class tc,
+                    pg_attribute ta
+                WHERE TRUE
+                    AND sc.oid = pg_constraint.conrelid
+                    AND tc.oid = pg_constraint.confrelid
+                    AND sa.attrelid = sc.oid
+                    AND ta.attrelid = tc.oid
+                    AND sa.attnum = pg_constraint.conkey[1]
+                    AND ta.attnum = pg_constraint.confkey[1]
+                    AND pg_constraint.contype = 'f'
+                    AND array_length(pg_constraint.conkey, 1) = 1
+                    AND array_length(pg_constraint.confkey, 1) = 1
+                    AND tc.relname = $1
+                    AND ta.attname = $2
+                `, [uniqueTableColumnType.tableName, uniqueTableColumnType.columnName]);
+
+            for (const row of queryResult.rows) {
+                const conname: string = row["conname"];
+                const relname: string = row["relname"];
+
+                await client.query(
+                    `
+                    ALTER TABLE "${relname}" DROP CONSTRAINT "${conname}"
+                    `);
+            }
+
+            const typeName = sqlUniqueTypeName(uniqueTableColumnType.tableName, uniqueTableColumnType.columnName);
+
+            await client.query(
+                `
+                CREATE TYPE "${typeName}" AS RANGE (SUBTYPE = "${tableColumn.typeName}")
+                `);
+
+            const colName = uniqueTableColumnType.columnName;
+
+            await client.query(
+                `
+                ALTER TABLE "${uniqueTableColumnType.tableName}"
+                    ALTER COLUMN "${colName}" DROP DEFAULT,
+                    ALTER COLUMN "${colName}" SET DATA TYPE "${typeName}" USING CASE WHEN "${colName}" IS NULL THEN NULL ELSE "${typeName}"("${colName}", "${colName}", '[]') END
+                `);
+
+            for (const row of queryResult.rows) {
+                const relname: string = row["relname"];
+                const attname: string = row["attname"];
+
+                await client.query(
+                    `
+                    ALTER TABLE "${relname}"
+                        ALTER COLUMN "${attname}" DROP DEFAULT,
+                        ALTER COLUMN "${attname}" SET DATA TYPE "${typeName}" USING CASE WHEN "${attname}" IS NULL THEN NULL ELSE "${typeName}"("${attname}", "${attname}", '[]') END
+                    `);
+            }
+        }
+    }
 }
