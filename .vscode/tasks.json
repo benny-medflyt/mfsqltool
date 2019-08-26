@@ -17,7 +17,7 @@
                     "endsPattern": "\\[DIAGNOSTICS END\\]"
                 },
                 "pattern": {
-                    "regexp": "^\\[DIAGNOSTIC\\] ([^\\s]*) \\((.*)\\) \\((.*)\\) (.*)$",
+                    "regexp": "^\\[DIAGNOSTIC\\] ([^\\s]*) \\(([^()]*)\\) \\(([^()]*)\\) (.*)$",
                     "file": 1,
                     "severity": 2,
                     "location": 3,
