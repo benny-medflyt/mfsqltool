@@ -6,7 +6,7 @@ import * as path from "path";
 import * as pg from "pg";
 import { Either } from "./either";
 import { ErrorDiagnostic, postgresqlErrorDiagnostic, SrcSpan, toSrcSpan } from "./ErrorDiagnostic";
-import { closePg, connectPg, dropAllTables, dropAllTypes, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
+import { closePg, connectPg, dropAllFunctions, dropAllSequences, dropAllTables, dropAllTypes, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
 import { calcDbMigrationsHash, connReplaceDbName, createBlankDatabase, dropDatabase, isMigrationFile, readdirAsync, testDatabaseName } from "./pg_test_db";
 import { ColNullability, ResolvedQuery, SqlType, TypeScriptType } from "./queries";
 import { resolveFromSourceMap } from "./source_maps";
@@ -72,7 +72,9 @@ export class DbConnector {
             this.viewNames = [];
 
             await dropAllTables(this.client);
+            await dropAllSequences(this.client);
             await dropAllTypes(this.client);
+            await dropAllFunctions(this.client);
 
             const allFiles = await readdirAsync(this.migrationsDir);
             const matchingFiles = allFiles.filter(isMigrationFile).sort();

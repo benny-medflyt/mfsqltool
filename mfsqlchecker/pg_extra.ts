@@ -184,6 +184,38 @@ export async function dropAllTables(client: pg.Client) {
         `);
 }
 
+export async function dropAllSequences(client: pg.Client) {
+    await client.query(
+        `
+        DO $$ DECLARE
+            r RECORD;
+        BEGIN
+            -- if the schema you operate on is not "current", you will want to
+            -- replace current_schema() in query with 'schematodeletetablesfrom'
+            -- *and* update the generate 'DROP...' accordingly.
+            FOR r IN (SELECT pg_class.relname FROM pg_class, pg_namespace WHERE pg_class.relnamespace = pg_namespace.oid AND pg_namespace.nspname = current_schema() AND pg_class.relkind = 'S') LOOP
+                EXECUTE 'DROP SEQUENCE IF EXISTS ' || quote_ident(r.relname) || ' CASCADE';
+            END LOOP;
+        END $$;
+        `);
+}
+
+export async function dropAllFunctions(client: pg.Client) {
+    await client.query(
+        `
+        DO $$ DECLARE
+            r RECORD;
+        BEGIN
+            -- if the schema you operate on is not "current", you will want to
+            -- replace current_schema() in query with 'schematodeletetablesfrom'
+            -- *and* update the generate 'DROP...' accordingly.
+            FOR r IN (SELECT pg_proc.proname, pg_proc.proargtypes FROM pg_proc, pg_namespace WHERE pg_proc.pronamespace = pg_namespace.oid AND pg_namespace.nspname = current_schema()) LOOP
+                EXECUTE 'DROP FUNCTION IF EXISTS ' || quote_ident(r.proname) || '(' || oidvectortypes(r.proargtypes) || ')' || ' CASCADE';
+            END LOOP;
+        END $$;
+        `);
+}
+
 export async function dropAllTypes(client: pg.Client) {
     await client.query(
         `
