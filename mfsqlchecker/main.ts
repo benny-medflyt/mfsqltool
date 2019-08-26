@@ -143,8 +143,8 @@ async function main(): Promise<void> {
         return process.exit(1);
     }
 
-    const e = new SqlCheckerEngine(options.uniqueTableColumnTypesFile, dbConnector, formatFunction(options.format));
-    const w = new TypeScriptWatcher(e);
+    const e = new SqlCheckerEngine(options.uniqueTableColumnTypesFile, dbConnector);
+    const w = new TypeScriptWatcher(e, formatFunction(options.format));
     w.run(options.projectDir);
 }
 

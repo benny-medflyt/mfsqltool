@@ -10,7 +10,7 @@ import { parseUniqueTableColumnTypeFile, sqlUniqueTypeName, UniqueTableColumnTyp
 import { QualifiedSqlViewName, resolveAllViewDefinitions, sourceFileModuleName, SqlViewDefinition, sqlViewLibraryResetToInitialFragmentsIncludingDeps, sqlViewsLibraryAddFromSourceFile } from "./views";
 
 export class SqlCheckerEngine {
-    constructor(private readonly uniqueTableColumnTypesFile: string | null, private readonly dbConnector: DbConnector, private readonly formatter: (errorDiagnostic: ErrorDiagnostic) => string) {
+    constructor(private readonly uniqueTableColumnTypesFile: string | null, private readonly dbConnector: DbConnector) {
         // TODO ...
         this.viewLibrary = new Map<QualifiedSqlViewName, SqlViewDefinition>();
     }
@@ -18,16 +18,21 @@ export class SqlCheckerEngine {
     viewLibrary: Map<QualifiedSqlViewName, SqlViewDefinition>;
 
     // TODO return list of errors
-    checkChangedSourceFiles(projectDir: string, program: ts.Program, checker: ts.TypeChecker, sourceFiles: ts.SourceFile[]): void {
+    checkChangedSourceFiles(projectDir: string, program: ts.Program, checker: ts.TypeChecker, sourceFiles: string[]): Promise<ErrorDiagnostic[]> {
         console.log("checkChangedSourceFiles");
 
         const before = new Date();
-        console.log("[DIAGNOSTICS START]");
+
+        const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
 
         for (const sourceFile of sourceFiles) {
-            const views = sqlViewsLibraryAddFromSourceFile(projectDir, sourceFile);
+            const sf = progSourceFiles.find(s => s.fileName === sourceFile);
+            if (sf === undefined) {
+                throw new Error("SourceFile not found: " + sourceFile);
+            }
+            const views = sqlViewsLibraryAddFromSourceFile(projectDir, sf);
             for (const key of this.viewLibrary.keys()) {
-                if (QualifiedSqlViewName.moduleId(key) === sourceFileModuleName(projectDir, sourceFile)) {
+                if (QualifiedSqlViewName.moduleId(key) === sourceFileModuleName(projectDir, sf)) {
                     const newView = views.get(key);
                     if (newView === undefined) {
                         this.viewLibrary.delete(key);
@@ -53,8 +58,6 @@ export class SqlCheckerEngine {
         const sqlViews = resolveAllViewDefinitions(this.viewLibrary);
 
         console.log("TIME:", new Date().getTime() - before.getTime());
-
-        const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
 
         let queries: QueryCallExpression[] = [];
         for (const sourceFile of progSourceFiles) {
@@ -93,14 +96,9 @@ export class SqlCheckerEngine {
 
         // console.log(resolvedQueries);
 
-        this.dbConnector.validateManifest({
+        return this.dbConnector.validateManifest({
             queries: resolvedQueries,
             viewLibrary: sqlViews
-        }).then(errors => {
-            for (const error of errors) {
-                console.log(this.formatter(error));
-            }
-            console.log("[DIAGNOSTICS END]");
         });
 
         // const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
@@ -167,7 +165,7 @@ export class SqlCheckerEngine {
 
 
 export class TypeScriptWatcher {
-    constructor(observer: SqlCheckerEngine) {
+    constructor(observer: SqlCheckerEngine, private readonly formatter: (errorDiagnostic: ErrorDiagnostic) => string) {
         this.observer = observer;
     }
 
@@ -287,8 +285,42 @@ export class TypeScriptWatcher {
     afterChange = (program: ts.Program, sourceFiles: ts.SourceFile[]): void => {
         console.log("AFTER CHANGE", sourceFiles.map(s => s.fileName));
 
-        this.observer.checkChangedSourceFiles(this.projectDir, program, program.getTypeChecker(), sourceFiles);
+        console.log("[DIAGNOSTICS START]");
+
+        this.program = program;
+
+        if (this.currentlyRunning) {
+            for (const s of sourceFiles) {
+                if (this.queuedSourceFiles.indexOf(s.fileName) < 0) {
+                    this.queuedSourceFiles.push(s.fileName);
+                }
+            }
+        } else {
+            this.currentlyRunning = true;
+            this.observer.checkChangedSourceFiles(this.projectDir, program, program.getTypeChecker(), sourceFiles.map(s => s.fileName)).then(this.checkerComplete);
+        }
     }
+
+    checkerComplete = (errors: ErrorDiagnostic[]): void => {
+        if (this.queuedSourceFiles.length > 0) {
+            if (this.program === undefined) {
+                throw new Error("The Impossible Happened");
+            }
+            this.observer.checkChangedSourceFiles(this.projectDir, this.program, this.program.getTypeChecker(), this.queuedSourceFiles).then(this.checkerComplete);
+            this.queuedSourceFiles = [];
+        } else {
+            this.currentlyRunning = false;
+
+            for (const error of errors) {
+                console.log(this.formatter(error));
+            }
+            console.log("[DIAGNOSTICS END]");
+        }
+    }
+
+    private currentlyRunning: boolean = false;
+    private program: ts.Program | undefined = undefined;
+    private queuedSourceFiles: string[] = [];
 }
 
 // const formatHost: ts.FormatDiagnosticsHost = {

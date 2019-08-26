@@ -6,7 +6,7 @@ Static Checker:
 [V] fix view caching/checking
 [V] store query col-types as TypeScript types (instead of sql types)
 [ ] change view exceptions to ErrorDiagnostic
-[ ] "hold" system for blocking/releasing updates when promise is running async. also maybe "cancellation token" system (for prematurely stopping currently running async task -- don't stop migrations or views, only stop queries)
+[V] "hold" system for blocking/releasing updates when promise is running async
 [/] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)
 [ ] mess with pg_cast table to prevent liberal assignments of any value to TEXT columns
 
@@ -41,6 +41,7 @@ Nice-to-have:
 [ ] automatically launch temporary postgres server
 [ ] Emit error when an unnamed column ("?column?") is returned
 [ ] Detect UPDATE and DELETE statements that don't have a WHERE clause (regex?)
+[ ] static checker: maybe "cancellation token" system (for prematurely stopping currently running async task -- don't stop migrations or views, only stop queries)
 
 Create temporary database:
 
