@@ -75,7 +75,7 @@ export class SqlCheckerEngine {
             const result = parseUniqueTableColumnTypeFile(this.uniqueTableColumnTypesFile, fileContents);
             switch (result.type) {
                 case "Left":
-                    throw new Error("TODO !!! ....");
+                    throw new Error("TODO !!! .... " + JSON.stringify(result.value.messages));
                 case "Right":
                     uniqueTableColumnTypes = result.value;
                     break;

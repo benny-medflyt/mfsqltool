@@ -9,7 +9,7 @@ export interface UniqueTableColumnType {
 }
 
 export function sqlUniqueTypeName(tableName: string, columnName: string): string {
-    return tableName + "(" + columnName + ')';
+    return tableName + "(" + columnName + ")";
 }
 
 export function makeUniqueColumnTypes(uniqueTableColumnTypes: UniqueTableColumnType[]): Map<SqlType, TypeScriptType> {

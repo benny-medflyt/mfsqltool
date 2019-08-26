@@ -653,6 +653,19 @@ function sqlTypeToTypeScriptType(uniqueColumnTypes: Map<SqlType, TypeScriptType>
             return TypeScriptType.wrap("string");
         case "bool":
             return TypeScriptType.wrap("boolean");
+
+        case "jsonb":
+            // TODO Think about a better way (any is bad)
+            return TypeScriptType.wrap("any");
+
+        // TODO Temporary
+        case "timestamp":
+            return TypeScriptType.wrap("LocalDateTime");
+        case "timestamptz":
+            return TypeScriptType.wrap("Instant");
+        case "date":
+            return TypeScriptType.wrap("LocalDate");
+
         default:
     }
 
@@ -787,7 +800,41 @@ async function queryTableColumn(client: pg.Client, tableName: string, columnName
     };
 }
 
+async function dropTableConstraints(client: pg.Client) {
+    const queryResult = await client.query(
+        `
+        select
+            pg_class.relname,
+            pg_constraint.conname
+        from
+            pg_constraint,
+            pg_class
+        WHERE TRUE
+        AND pg_constraint.conrelid = pg_class.oid
+        AND pg_constraint.conrelid > 0
+        AND pg_constraint.contype = 'c';
+        `);
+
+    for (const row of queryResult.rows) {
+        const relname: string = row["relname"];
+        const conname: string = row["conname"];
+
+        await client.query(
+            `
+            ALTER TABLE "${relname}" DROP CONSTRAINT IF EXISTS "${conname}" CASCADE
+            `);
+    }
+}
+
 export async function applyUniqueTableColumnTypes(client: pg.Client, uniqueTableColumnTypes: UniqueTableColumnType[]): Promise<void> {
+    // We need to drop all table constraints before converting the id columns.
+    // This is because some constraints might refer to these table columns and
+    // they might not like it if the column type changes.
+    //
+    // Remember that for our purposes constraints serve no purpose because we
+    // never actually insert or update any data in the database.
+    await dropTableConstraints(client);
+
     for (const uniqueTableColumnType of uniqueTableColumnTypes) {
         const tableColumn = await queryTableColumn(client, uniqueTableColumnType.tableName, uniqueTableColumnType.columnName);
 

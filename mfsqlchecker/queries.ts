@@ -245,22 +245,66 @@ export const enum ColNullability {
     OPT
 }
 
+function getArrayType(type: ts.Type): ts.Type | null {
+    if (type.symbol.name === "Array") {
+        if ((<any>type).typeArguments !== undefined) {
+            const typeArguments: ReadonlyArray<ts.Type> = (<any>type).typeArguments;
+            if (typeArguments.length === 1) {
+                return typeArguments[0];
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Checks if the type is something like: "Yes" | "No" | "Maybe"
+ */
+function isUnionOfStringLiterals(type: ts.Type): boolean {
+    if ((type.flags & ts.TypeFlags.Union) === 0) { // tslint:disable-line:no-bitwise
+        return false;
+    }
+
+    const types: ReadonlyArray<ts.Type> = (<any>type).types;
+    for (const unionType of types) {
+        if ((unionType.flags & ts.TypeFlags.String) === 0 && (unionType.flags & ts.TypeFlags.StringLiteral) === 0) { // tslint:disable-line:no-bitwise
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /**
  * @returns Empty string means SQL "NULL" literal. `null` means an error
  */
 function typescriptTypeToSqlType(typeScriptUniqueColumnTypes: Map<TypeScriptType, SqlType>, type: ts.Type): SqlType | null {
     if (type.flags === ts.TypeFlags.Null) {
         return SqlType.wrap("");
+    } else if ((type.flags & ts.TypeFlags.Never) !== 0) { // tslint:disable-line:no-bitwise
+        return null;
     } else if ((type.flags & ts.TypeFlags.Boolean) !== 0 || (type.flags & ts.TypeFlags.BooleanLiteral) !== 0) { // tslint:disable-line:no-bitwise
         return SqlType.wrap("bool");
     } else if ((type.flags & ts.TypeFlags.Number) !== 0 || (type.flags & ts.TypeFlags.NumberLiteral) !== 0) { // tslint:disable-line:no-bitwise
         return SqlType.wrap("int4");
     } else if ((type.flags & ts.TypeFlags.String) !== 0 || (type.flags & ts.TypeFlags.StringLiteral) !== 0) { // tslint:disable-line:no-bitwise
         return SqlType.wrap("text");
+    } else if (isUnionOfStringLiterals(type)) {
+        return SqlType.wrap("text");
     }
 
-    if (type.symbol === undefined) {
+    if ((<any>type).symbol === undefined) {
         throw new Error("TODO figure out when this happens");
+    }
+
+    const arrayType = getArrayType(type);
+    if (arrayType !== null) {
+        const name = typescriptTypeToSqlType(typeScriptUniqueColumnTypes, arrayType);
+        if (name === null) {
+            return null;
+        }
+        return SqlType.wrap(SqlType.unwrap(name) + "[]");
     }
 
     const sqlType = typeScriptUniqueColumnTypes.get(TypeScriptType.wrap(type.symbol.name));
@@ -271,6 +315,10 @@ function typescriptTypeToSqlType(typeScriptUniqueColumnTypes: Map<TypeScriptType
     // TODO Temporary
     if (type.symbol.name === "Instant") {
         return SqlType.wrap("timestamptz");
+    } else if (type.symbol.name === "LocalDateTime") {
+        return SqlType.wrap("timestamp");
+    } else if (type.symbol.name === "LocalDate") {
+        return SqlType.wrap("date");
     }
 
     return null;
@@ -387,7 +435,20 @@ export function resolveQueryFragment(typeScriptUniqueColumnTypes: Map<TypeScript
                     } else {
                         numParams++;
                         const sqlTypeStr = SqlType.unwrap(sqlType);
-                        text += "($" + numParams + (sqlTypeStr !== "" ? "::" + "\"" + sqlTypeStr + "\"" : "") + ")";
+
+                        // Ugly hack for detecing an sql array type
+                        //
+                        // WRONG: "myType[]" RIGHT: "myType"[]
+                        //
+                        // The correct (non-hacky) way to do this is to change
+                        // "SqlType" from a string to a real type with an
+                        // (isArray: boolean) prop
+
+                        const escapedSqlTypeStr = sqlTypeStr.endsWith("[]")
+                            ? "\"" + sqlTypeStr.substring(0, sqlTypeStr.length - 2) + "\"[]"
+                            : "\"" + sqlTypeStr + "\"";
+
+                        text += "($" + numParams + (sqlTypeStr !== "" ? "::" + escapedSqlTypeStr : "") + ")";
                     }
                 }
                 break;

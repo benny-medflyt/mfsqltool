@@ -4,7 +4,7 @@ Static Checker:
 [V] "commander" command line parsing
 [ ] command line one-shot usage
 [V] fix view caching/checking
-[ ] store query col-types as TypeScript types (instead of sql types)
+[V] store query col-types as TypeScript types (instead of sql types)
 [ ] change view exceptions to ErrorDiagnostic
 [ ] "hold" system for blocking/releasing updates when promise is running async. also maybe "cancellation token" system (for prematurely stopping currently running async task -- don't stop migrations or views, only stop queries)
 [/] Integrate into VSCode (custom plugin, or figure out how to integrate command line --watch program to highlight errors; problem matchers: <https://code.visualstudio.com/docs/editor/tasks>)
@@ -12,7 +12,7 @@ Static Checker:
 
 Run-time Library:
 
-[ ] Connection wrapper object (conn.query, conn.queryOne, conn.queryOneOrNone)
+[V] Connection wrapper object (conn.query, conn.queryOne, conn.queryOneOrNone)
 [ ] insert DSL (This is needed to validate that all non-default columns are present)
       conn.insertOne("employee",
           {
@@ -26,7 +26,7 @@ Run-time Library:
               fname: sql`${}`,
               lname: sql`${fname} || fname`
           }], sql`RETURNING id`);
-[ ] update DSL (This is needed to validate that assignments to TEXT columns have an expression of type TEXT (sadly postgresql implicitly casts any type to TEXT))
+[ ] update DSL (This is needed to validate that assignments to TEXT columns have an expression of type TEXT (sadly postgresql implicitly casts any type to TEXT)) [NOTE! This issue might not be needed if "pg_cast" above technique works!]
 [ ] migrations runner (algorithm:
     no un-applied migration files? just "CREATE OR REPLACE" all of the views (for performance: maybe all concatenated together as one huge string?)
     otherwise: try applying un-applied migration(s) file. did it work? great!

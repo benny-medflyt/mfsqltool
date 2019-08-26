@@ -1,4 +1,4 @@
-import { defineSqlView, Connection, sql, Req, Opt } from "./lib/mfsqltool";
+import { defineSqlView, Connection, Req, Opt } from "./lib/mfsqltool";
 import { EmployeeId, CarId, CustomerId } from "./types";
 
 // import { coolView } from "./blah";
@@ -12,31 +12,35 @@ const employeeName2 = defineSqlView`SELECT employee_fname AS fname, lname1 AS ln
 const badView = defineSqlView`SELECT 'cool' AS num UNION ALL SELECT NULL`;
 
 export async function test() {
-    const conn: Connection = null as any;
+    const conn: Connection<EmployeeId | EmployeeId[]> = null as any;
 
     // const blah: "blah" | null = "blah";
 
-    await conn.query(sql`
+    await conn.query(conn.sql`
     
     `);
 
     await conn.query<{
         fname: Req<string>,
         lname: Req<string>
-    }>(sql
+    }>(conn.sql
         `
         SELECT * FROM ${employeeName2}
         `);
 
+    const goodEmployees: EmployeeId[] = [];
+    // const goodCars: CarId[] = [];
+
     const employees = await conn.query<{
         id: Req<EmployeeId>
-    }>(sql
+    }>(conn.sql
         `
         SELECT
             id
         FROM
             employee
         WHERE salary > ${5}
+        AND id = ANY(${goodEmployees})
         `);
 
     // const rows = await query<{ name: string, age: number }>(conn, sql
@@ -48,7 +52,7 @@ export async function test() {
         manager_id: Opt<EmployeeId>,
         managername: Req<string>,
         badViewNum: Opt<string>
-    }>(sql
+    }>(conn.sql
         `
         SELECT
             employee.fname,
@@ -75,7 +79,7 @@ export async function test() {
         model: Req<string>,
         status: Req<string>,
         total_cost: Req<number>
-    }>(sql
+    }>(conn.sql
         ` SELECT * FROM car
         `);
 

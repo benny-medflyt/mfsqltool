@@ -1,8 +1,8 @@
-import { Connection, Req, Opt, sql } from "./lib/mfsqltool";
+import { Connection, Req, Opt } from "./lib/mfsqltool";
 import { EmployeeId, CarId, CustomerId } from "./types";
 
 export async function bloob() {
-    const conn: Connection = null as any;
+    const conn: Connection<number> = null as any;
 
     const rows = await conn.query<{
         fname: Req<string>,
@@ -11,7 +11,7 @@ export async function bloob() {
         salary: Req<number>,
         manager_id: Opt<EmployeeId>,
         managername: Req<string>
-    }>(sql
+    }>(conn.sql
         `
         SELECT
             employee.fname,
@@ -35,7 +35,7 @@ export async function bloob() {
         status: Req<string>,
         total_cost: Req<number>
     }
-    >(sql
+    >(conn.sql
         ` SELECT * FROM car
         `);
 

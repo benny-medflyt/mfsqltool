@@ -1,38 +1,111 @@
 import * as fs from "fs";
 import * as pg from "pg";
 import * as stackTrace from "stack-trace";
-import { assertNever } from "assert-never";
 import { calcViewName } from "./view_names";
 
 export type ColumnParser<T> = (value: any) => T;
 
-export class Connection {
+export class Connection<T> {
     /**
      * Used only to statically identify this type
      */
     protected readonly MfConnectionTypeTag: undefined;
 
-    constructor(client: pg.Client, columnParsers: Map<number, ColumnParser<any>>) {
+    constructor(client: pg.Client) {
         this.client = client;
-        this.columnParsers = columnParsers;
     }
 
     readonly client: pg.Client;
 
-    async query<Row extends object = any>(query: SqlQueryExpr): Promise<ResultRow<Row>[]> {
-        const queryResult = await this.client.query(query.text, query.values);
+    /**
+     * May be overriden by child class
+     */
+    protected formatPlaceholder(placeholder: T): any {
+        return placeholder;
+    }
+
+    /**
+     * May be overriden by child class
+     *
+     * @param columnType PostgreSQL field type. See "pg-types" package
+     * @param val The value from the database. This is after "pg" has already
+     * handled it using its default parser
+     */
+    protected parseColumn(_columnType: number, val: any): any {
+        return val;
+    }
+
+    private preparePlaceholder(placeholder: number | number[] | string | string[] | boolean | boolean[] | null | T): any {
+        if (Array.isArray(placeholder)) {
+            const result: any[] = [];
+            for (const elem of placeholder) {
+                result.push(this.preparePlaceholder(elem));
+            }
+            return result;
+        } else if (typeof placeholder === "number" || typeof placeholder === "string" || typeof placeholder === "boolean" || placeholder === null) {
+            return placeholder;
+        } else {
+            return this.formatPlaceholder(placeholder);
+        }
+    }
+
+    sql(literals: TemplateStringsArray, ...placeholders: (SqlView | number | number[] | string | string[] | boolean | boolean[] | null | T)[]): SqlQueryExpr<T> {
+        let text = "";
+        const values: any[] = [];
+
+        text += literals[0];
+
+        for (let i = 0; i < placeholders.length; ++i) {
+            const placeholder = placeholders[i];
+            if (placeholder instanceof SqlView) {
+                if (!placeholder.isResolved()) {
+                    throw new Error(`View "${placeholder.getViewName()}" has not been created. Views are only allowed to be defined at module-level scope`);
+                }
+                text += `"${placeholder.getViewName()}"`;
+            } else {
+                values.push(this.preparePlaceholder(placeholder));
+                text += `($${values.length})`;
+            }
+
+            text += literals[i + 1];
+        }
+
+        return new SqlQueryExpr(text, values);
+    }
+
+    async query<Row extends object = any>(query: SqlQueryExpr<T>): Promise<ResultRow<Row>[]> {
+        // Use this instead of the built-in promise support of pg.Client because
+        // `connectionLogSQL` (currently) needs an actual callback
+        function clientQueryPromise(client: pg.Client, text: string, values: any[]) {
+            return new Promise<pg.QueryResult>((resolve, reject) => {
+                client.query(text, values, (err: Error, result: pg.QueryResult): void => {
+                    if (<boolean>(<any>err)) {
+                        reject(err);
+                        return;
+                    }
+
+                    resolve(result);
+                });
+            });
+        }
+
+        const queryResult = await clientQueryPromise(this.client, query.text, query.values);
         for (const row of queryResult.rows) {
             for (const field of queryResult.fields) {
-                const parser = this.columnParsers.get(field.dataTypeID);
                 const fieldName = field.name;
-                row[fieldName] = new RealVal(parser !== undefined ? parser(row[fieldName]) : row[fieldName], fieldName, row);
+                const oldVal = row[fieldName];
+                try {
+                    row[fieldName] = new RealVal(oldVal !== null ? this.parseColumn(field.dataTypeID, oldVal) : null, fieldName, row);
+                } catch (err) {
+                    throw new Error(`Error parsing column "${fieldName}" containing value "${oldVal}": ${err.message}`);
+                }
             }
         }
 
         return queryResult.rows;
     }
 
-    async queryOne<Row extends object = any>(query: SqlQueryExpr): Promise<ResultRow<Row>> {
+    async queryOne<Row extends object = any>(query: SqlQueryExpr<T>): Promise<ResultRow<Row>> {
         const rows = await this.query(query);
         if (rows.length !== 1) {
             throw new Error(`Expected query to return 1 row. Got ${rows.length} rows`);
@@ -40,7 +113,7 @@ export class Connection {
         return rows[0];
     }
 
-    async queryOneOrNone<Row extends object = any>(query: SqlQueryExpr): Promise<ResultRow<Row> | null> {
+    async queryOneOrNone<Row extends object = any>(query: SqlQueryExpr<T>): Promise<ResultRow<Row> | null> {
         const rows = await this.query(query);
         if (rows.length === 0) {
             return null;
@@ -50,11 +123,9 @@ export class Connection {
             throw new Error(`Expected query to return 0 or 1 rows. Got ${rows.length} rows`);
         }
     }
-
-    private readonly columnParsers: Map<number, ColumnParser<any>>;
 }
 
-class SqlQueryExpr {
+class SqlQueryExpr<T> {
     constructor(text: string, values: any[]) {
         this.text = text;
         this.values = values;
@@ -63,37 +134,11 @@ class SqlQueryExpr {
     public readonly text: string;
     public readonly values: any[];
 
-    protected dummy: SqlQueryExpr[];
+    protected dummy: SqlQueryExpr<T>[];
 }
 
-type SqlQueryPlaceHolder = SqlView | number | string | boolean | null;
-
-export function sql(literals: TemplateStringsArray, ...placeholders: SqlQueryPlaceHolder[]): SqlQueryExpr {
-    let text = "";
-    let values: any[] = [];
-
-    text += literals[0];
-    for (let i = 0; i < placeholders.length; ++i) {
-        const placeholder = placeholders[i];
-        if (typeof placeholder === "number" || typeof placeholder === "string" || typeof placeholder === "boolean" || placeholder === null) {
-            values.push(placeholder);
-            text += `($${values.length})`;
-        } else {
-            switch (placeholder.type) {
-                case "SqlView":
-                    if (!placeholder.resolved) {
-                        throw new Error(`View "${placeholder.viewName}" has not been created. Views are only allowed to be defined at module-level scope`);
-                    }
-                    text += `"${placeholder.viewName}"`;
-                    break;
-                default:
-                    assertNever(placeholder.type);
-            }
-        }
-        text += literals[i + 1];
-    }
-
-    return new SqlQueryExpr(text, values);
+export interface SqlParameter {
+    type: "SqlParameter";
 }
 
 type ResultRow<T> = {
@@ -111,7 +156,7 @@ type ResultRow<T> = {
             )
         )
     );
-}
+};
 
 export abstract class Req<T> {
     /**
@@ -200,16 +245,31 @@ function stringifyRealValRow(obj: any): string {
     return JSON.stringify(obj2);
 }
 
-interface SqlView {
-    readonly type: "SqlView";
-    readonly viewName: string;
+class SqlView {
+    constructor(viewName: string) {
+        this.viewName = viewName;
+    }
+
+    getViewName(): string {
+        return this.viewName;
+    }
+
+    isResolved(): boolean {
+        return this.resolved;
+    }
+
+    setResolved(): void {
+        this.resolved = true;
+    }
+
+    private readonly viewName: string;
 
     /**
      * Will be mutated to "true" in "initAllViews" (So that later during
      * run-time we can validate that "defineSqlView" was called properly (from
      * top-level, and not inside some function)
      */
-    resolved: boolean;
+    private resolved: boolean = false;
 }
 
 interface SqlCreateView {
@@ -240,7 +300,7 @@ export function defineSqlView(x: TemplateStringsArray, ...placeholders: SqlView[
 
     let query: string = x[0];
     for (let i = 0; i < placeholders.length; ++i) {
-        query += "\"" + placeholders[i].viewName + "\"";
+        query += "\"" + placeholders[i].getViewName() + "\"";
         query += x[i + 1];
     }
 
@@ -260,24 +320,18 @@ export function defineSqlView(x: TemplateStringsArray, ...placeholders: SqlView[
             `
     });
 
-    return {
-        type: "SqlView",
-        viewName: viewName,
-        resolved: false
-    };
+    return new SqlView(viewName);
 }
 
-export interface Connection { }
-
-export async function dbExecute(_conn: Connection, _query: string): Promise<void> {
+export async function dbExecute(_conn: pg.Client, _query: string): Promise<void> {
     throw new Error("TODO");
 }
 
-export async function dbQueryFindMissingViews(_conn: Connection, _viewNames: string[]): Promise<Set<string>> {
+export async function dbQueryFindMissingViews(_conn: pg.Client, _viewNames: string[]): Promise<Set<string>> {
     throw new Error("TODO");
 }
 
-export async function initAllViews(conn: Connection) {
+export async function initAllViews(conn: pg.Client) {
     // TODO Do this all in a single transaction (or maybe not?)
 
     const missingViews: Set<string> = await dbQueryFindMissingViews(conn, allSqlViewCreateStatements.map(view => view.viewName));
