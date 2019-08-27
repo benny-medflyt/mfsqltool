@@ -6,9 +6,10 @@ import { DbConnector } from "./DbConnector";
 import { ErrorDiagnostic } from "./ErrorDiagnostic";
 import { codeFrameFormatter } from "./formatters/codeFrameFormatter";
 import { vscodeFormatter } from "./formatters/vscodeFormatter";
+import { PostgresServer } from "./launch_postgres";
 import { parsePostgreSqlError } from "./pg_extra";
 import { isTestDatabaseCluster } from "./pg_test_db";
-import { SqlCheckerEngine, TypeScriptWatcher } from "./sqlchecker_engine";
+import { SqlCheckerEngine, typeScriptSingleRunCheck, TypeScriptWatcher } from "./sqlchecker_engine";
 
 interface PostgresConnection {
     readonly url: string;
@@ -25,7 +26,7 @@ interface Options {
     readonly projectDir: string;
     readonly migrationsDir: string;
     readonly uniqueTableColumnTypesFile: string | null;
-    readonly postgresConnection: PostgresConnection;
+    readonly postgresConnection: PostgresConnection | null;
     readonly format: Format;
 }
 
@@ -84,17 +85,28 @@ function parseOptions(): Options {
 
     required("project", "--project");
     required("migrations", "--migrations");
-    required("postgresUrl", "--postgres-url");
+
+    if (program.dbName && !program.postgresUrl) {
+        console.error(`error: --db-name argument can only be used together with --postgres-url`);
+        process.exit(1);
+    }
+
+    let postgres: PostgresConnection | null;
+    if (program.postgresUrl) {
+        postgres = {
+            url: program.postgresUrl,
+            databaseName: program.dbName ? program.dbName : undefined
+        };
+    } else {
+        postgres = null;
+    }
 
     const options: Options = {
         watchMode: program.watch === true,
         projectDir: program.project,
         migrationsDir: program.migrations,
         uniqueTableColumnTypesFile: program.uniqueCols ? program.uniqueCols : null,
-        postgresConnection: {
-            url: program.postgresUrl,
-            databaseName: program.dbName ? program.dbName : undefined
-        },
+        postgresConnection: postgres,
         format: program.format
     };
     return options;
@@ -114,38 +126,81 @@ function formatFunction(format: Format): (errorDiagnostic: ErrorDiagnostic) => s
 async function main(): Promise<void> {
     const options = parseOptions();
 
-    if (!isTestDatabaseCluster(options.postgresConnection.url)) {
+    if (options.postgresConnection !== null && !isTestDatabaseCluster(options.postgresConnection.url)) {
         console.error("Database Cluster url is not a local connection or is invalid:\n" + options.postgresConnection.url);
-        // process.exit(1);
+        process.exit(1);
     }
 
-    let dbConnector: DbConnector;
+    let pgServer: PostgresServer | null = null;
+
+    let url: string;
+    let dbName: string | undefined;
+    if (options.postgresConnection !== null) {
+        url = options.postgresConnection.url;
+        dbName = options.postgresConnection.databaseName;
+    } else {
+        pgServer = await PostgresServer.start("10.10");
+        url = pgServer.url;
+        dbName = undefined;
+    }
     try {
-        dbConnector = await DbConnector.Connect(options.migrationsDir, options.uniqueTableColumnTypesFile, options.postgresConnection.url, options.postgresConnection.databaseName);
-    } catch (err) {
-        const perr = parsePostgreSqlError(err);
-        if (perr !== null) {
-            console.error("Error connecting to database cluster:");
-            console.error(perr.message);
-            console.error("code: " + perr.code);
-            if (perr.detail !== null && perr.detail !== perr.message) {
-                console.error("detail: " + perr.detail);
-            }
-            if (perr.hint !== null) {
-                console.error("hint: " + perr.hint);
-            }
-        } else if (err.code) {
-            console.error("Error connecting to database cluster:");
-            console.error(err.message);
-        } else {
-            throw err;
-        }
-        return process.exit(1);
-    }
 
-    const e = new SqlCheckerEngine(options.uniqueTableColumnTypesFile, dbConnector);
-    const w = new TypeScriptWatcher(e, formatFunction(options.format));
-    w.run(options.projectDir);
+        process.on("SIGINT", async () => {
+            if (pgServer !== null) {
+                await pgServer.close();
+                pgServer = null;
+            }
+            process.exit();
+        });
+
+        let dbConnector: DbConnector;
+        try {
+            dbConnector = await DbConnector.Connect(options.migrationsDir, options.uniqueTableColumnTypesFile, url, dbName);
+        } catch (err) {
+            const perr = parsePostgreSqlError(err);
+            if (perr !== null) {
+                console.error("Error connecting to database cluster:");
+                console.error(perr.message);
+                console.error("code: " + perr.code);
+                if (perr.detail !== null && perr.detail !== perr.message) {
+                    console.error("detail: " + perr.detail);
+                }
+                if (perr.hint !== null) {
+                    console.error("hint: " + perr.hint);
+                }
+            } else if (err.code) {
+                console.error("Error connecting to database cluster:");
+                console.error(err.message);
+            } else {
+                throw err;
+            }
+            return process.exit(1);
+        }
+        try {
+            const formatter = formatFunction(options.format);
+            const e = new SqlCheckerEngine(options.uniqueTableColumnTypesFile, dbConnector);
+            if (options.watchMode) {
+                const w = new TypeScriptWatcher(e, formatter);
+                w.run(options.projectDir);
+                await blockForever();
+            } else {
+                const success = await typeScriptSingleRunCheck(options.projectDir, e, formatter);
+                if (!success) {
+                    process.exitCode = 1;
+                }
+            }
+        } finally {
+            await dbConnector.close();
+        }
+    } finally {
+        if (pgServer !== null) {
+            await pgServer.close();
+        }
+    }
+}
+
+function blockForever(): Promise<void> {
+    return new Promise<void>(() => { /* Block Forever */ });
 }
 
 main();

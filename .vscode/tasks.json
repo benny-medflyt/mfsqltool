@@ -6,7 +6,7 @@
         {
             "label": "mfsqlchecker",
             "type": "shell",
-            "command": "node ./build/mfsqlchecker/main.js -p demo/ -m migrations/ -u 'postgres://test:test@localhost:6432/test' -d test1 --format vscode",
+            "command": "node ./build/mfsqlchecker/main.js -p demo/ -m migrations/ -c demo/unique_table_column_types.json --format vscode --watch",
             "isBackground": true,
             "problemMatcher": {
                 "owner": "mfsqlchecker",

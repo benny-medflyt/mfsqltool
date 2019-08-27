@@ -2,6 +2,7 @@ import "source-map-support/register"; // tslint:disable-line:no-import-side-effe
 
 import { assertNever } from "assert-never";
 import * as fs from "fs";
+import * as path from "path";
 import * as ts from "typescript";
 import { DbConnector } from "./DbConnector";
 import { ErrorDiagnostic } from "./ErrorDiagnostic";
@@ -163,6 +164,63 @@ export class SqlCheckerEngine {
 // }
 
 
+export async function typeScriptSingleRunCheck(projectDir: string, observer: SqlCheckerEngine, formatter: (errorDiagnostic: ErrorDiagnostic) => string): Promise<boolean> {
+    const configPath = ts.findConfigFile(
+        /*searchPath*/ projectDir,
+        ts.sys.fileExists, // tslint:disable-line:no-unbound-method
+        "tsconfig.json"
+    );
+
+    if (configPath === undefined) {
+        throw new Error("Could not find a valid 'tsconfig.json'.");
+    }
+
+    // tslint:disable-next-line:no-unbound-method
+    const config = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (config.error !== undefined) {
+        throw new Error(ts.formatDiagnostics([config.error], {
+            getCanonicalFileName: f => f,
+            getCurrentDirectory: process.cwd, // tslint:disable-line:no-unbound-method
+            getNewLine: () => "\n"
+        }));
+    }
+
+    const parseConfigHost: ts.ParseConfigHost = {
+        fileExists: fs.existsSync,
+        readDirectory: ts.sys.readDirectory, // tslint:disable-line:no-unbound-method
+        readFile: file => fs.readFileSync(file, "utf8"),
+        useCaseSensitiveFileNames: true
+    };
+
+    const parsed = ts.parseJsonConfigFileContent(config.config, parseConfigHost, path.resolve(projectDir));
+
+    if (<any>parsed.errors !== undefined) {
+        // ignore warnings and 'TS18003: No inputs were found in config file ...'
+        const errors = parsed.errors.filter(
+            d => d.category === ts.DiagnosticCategory.Error && d.code !== 18003
+        );
+        if (errors.length !== 0) {
+            throw new Error(
+                ts.formatDiagnostics(errors, {
+                    getCanonicalFileName: f => f,
+                    getCurrentDirectory: process.cwd, // tslint:disable-line:no-unbound-method
+                    getNewLine: () => "\n"
+                })
+            );
+        }
+    }
+    const host = ts.createCompilerHost(parsed.options, true);
+    const program = ts.createProgram(parsed.fileNames, parsed.options, host);
+
+    const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
+
+    const errors = await observer.checkChangedSourceFiles(projectDir, program, program.getTypeChecker(), progSourceFiles.map(s => s.fileName));
+    for (const error of errors) {
+        console.log(formatter(error));
+    }
+
+    return errors.length === 0;
+}
 
 export class TypeScriptWatcher {
     constructor(observer: SqlCheckerEngine, private readonly formatter: (errorDiagnostic: ErrorDiagnostic) => string) {

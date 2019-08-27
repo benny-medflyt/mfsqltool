@@ -46,6 +46,10 @@ export class DbConnector {
         return new DbConnector(migrationsDir, uniqueTableColumnTypesFile, client);
     }
 
+    async close(): Promise<void> {
+        await closePg(this.client);
+    }
+
     private migrationsDir: string;
     private uniqueTableColumnTypesFile: string | null;
     private client: pg.Client;
