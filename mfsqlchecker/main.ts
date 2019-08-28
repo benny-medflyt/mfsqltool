@@ -2,6 +2,7 @@ import "source-map-support/register"; // tslint:disable-line:no-import-side-effe
 
 import { assertNever } from "assert-never";
 import * as commander from "commander";
+import * as fs from "fs";
 import { loadConfigFile } from "./ConfigFile";
 import { DbConnector } from "./DbConnector";
 import { ErrorDiagnostic } from "./ErrorDiagnostic";
@@ -157,6 +158,21 @@ async function main(): Promise<void> {
 
     if (migrationsDir === null) {
         console.error("migrations-dir is missing. Must be set in config file or command line");
+        return process.exit(1);
+    }
+
+    const m = migrationsDir;
+    const migrationsDirExists = await new Promise<boolean>((resolve) => {
+        fs.stat(m, (err, stats) => {
+            if (<any>err) {
+                resolve(false);
+                return;
+            }
+            resolve(stats.isDirectory());
+        });
+    });
+    if (!migrationsDirExists) {
+        console.error(`Migrations directory (${migrationsDir}) is not a readable directory`);
         return process.exit(1);
     }
 
