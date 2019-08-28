@@ -639,11 +639,9 @@ function sqlTypeToTypeScriptType(uniqueColumnTypes: Map<SqlType, TypeScriptType>
         case "bool":
             return TypeScriptType.wrap("boolean");
 
-        case "jsonb":
-            // TODO Think about a better way (any is bad)
-            return TypeScriptType.wrap("any");
-
         // TODO Temporary
+        case "jsonb":
+            return TypeScriptType.wrap("DbJson");
         case "timestamp":
             return TypeScriptType.wrap("LocalDateTime");
         case "timestamptz":

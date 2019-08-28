@@ -313,7 +313,9 @@ function typescriptTypeToSqlType(typeScriptUniqueColumnTypes: Map<TypeScriptType
     }
 
     // TODO Temporary
-    if (type.symbol.name === "Instant") {
+    if (type.symbol.name === "DbJson") {
+        return SqlType.wrap("jsonb");
+    } else if (type.symbol.name === "Instant") {
         return SqlType.wrap("timestamptz");
     } else if (type.symbol.name === "LocalDateTime") {
         return SqlType.wrap("timestamp");
