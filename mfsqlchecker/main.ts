@@ -58,6 +58,7 @@ function parseOptions(): Options {
         .option("-c, --unique-cols <file>", "Unique table column types file")
         .option("-u, --postgres-url <url>", "PostgreSQL connection string")
         .option("-d, --db-name <name>", "Name of database to use")
+        .option("--postgres-version <version>", "Version of PostgreSQL server to test against")
         .option("-t, --format <format>", "code-frame", parseFormat, Format.CODE_FRAME);
 
     try {
