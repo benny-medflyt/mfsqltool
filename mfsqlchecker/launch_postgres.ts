@@ -230,7 +230,7 @@ export async function downloadPostgres(platform: Platform, postgresVersion: Post
         });
     });
 
-    console.log("DONE", url);
+    console.log(`PostgreSQL ${postgresVersion} ready`);
 }
 
 export async function getPostgresBinaryPath(platform: Platform, postgresVersion: PostgresVersion, binaryName: string): Promise<string> {

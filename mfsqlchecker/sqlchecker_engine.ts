@@ -19,10 +19,6 @@ export class SqlCheckerEngine {
 
     // TODO return list of errors
     checkChangedSourceFiles(projectDir: string, program: ts.Program, checker: ts.TypeChecker, sourceFiles: string[]): Promise<ErrorDiagnostic[]> {
-        console.log("checkChangedSourceFiles");
-
-        const before = new Date();
-
         const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
 
         for (const sourceFile of sourceFiles) {
@@ -56,8 +52,6 @@ export class SqlCheckerEngine {
         }
 
         const sqlViews = resolveAllViewDefinitions(this.viewLibrary);
-
-        console.log("TIME:", new Date().getTime() - before.getTime());
 
         let queries: QueryCallExpression[] = [];
         for (const sourceFile of progSourceFiles) {
@@ -239,9 +233,7 @@ export class TypeScriptWatcher {
         // tslint:disable-next-line:no-unbound-method
         const origEmit = b.emit;
         b.emit = (targetSourceFile?: ts.SourceFile, writeFile?: ts.WriteFileCallback, cancellationToken?: ts.CancellationToken, emitOnlyDtsFiles?: boolean, customTransformers?: ts.CustomTransformers): ts.EmitResult => {
-            console.log("emit", targetSourceFile, writeFile);
             const writeFile2 = (fileName: string, data: string, writeByteOrderMark: boolean, onError?: (message: string) => void, sourceFiles?: ReadonlyArray<ts.SourceFile>): void => {
-                console.log("writeFile", fileName, data.length, writeByteOrderMark);
                 if (writeFile !== undefined) {
                     writeFile(fileName, data, writeByteOrderMark, onError, sourceFiles);
                 }
@@ -252,16 +244,13 @@ export class TypeScriptWatcher {
                 // console.log("changedFile", changedFile, sourceFilenameModuleName(projectDirAbs, changedFile[0]));
                 this.changedSourceFiles.push(changedFile[0]);
             }
-            console.log("emit result", changedFiles);
             return result;
         };
 
         // tslint:disable-next-line:no-unbound-method
         const origEmitNextAffectedFile = b.emitNextAffectedFile;
         b.emitNextAffectedFile = (writeFile?: ts.WriteFileCallback, cancellationToken?: ts.CancellationToken, emitOnlyDtsFiles?: boolean, customTransformers?: ts.CustomTransformers): ts.AffectedFileResult<ts.EmitResult> => {
-            console.log("emitNextAffectedFile");
             const result = origEmitNextAffectedFile(writeFile, cancellationToken, emitOnlyDtsFiles, customTransformers);
-            console.log("emitNextAffectedFile result", result);
             return result;
         };
         return b;
@@ -302,7 +291,6 @@ export class TypeScriptWatcher {
         const origPostProgramCreate = host.afterProgramCreate;
 
         host.afterProgramCreate = program => {
-            console.log("** We finished making the program! **");
             this.builderProgram = program;
             origPostProgramCreate(program);
         };
@@ -319,7 +307,6 @@ export class TypeScriptWatcher {
     }
 
     reportWatchStatusChanged = (diagnostic: ts.Diagnostic, _newLine: string, _options: ts.CompilerOptions): void => {
-        console.info("reportWatchStatusChanged", JSON.stringify(diagnostic));
         if (diagnostic.code === 6193 || diagnostic.code === 6194) {
             if (this.builderProgram === null) {
                 throw new Error(`builderProgram not ready`);
@@ -343,8 +330,6 @@ export class TypeScriptWatcher {
     }
 
     afterChange = (program: ts.Program, sourceFiles: ts.SourceFile[]): void => {
-        console.log("AFTER CHANGE", sourceFiles.map(s => s.fileName));
-
         console.log("[DIAGNOSTICS START]");
 
         this.program = program;

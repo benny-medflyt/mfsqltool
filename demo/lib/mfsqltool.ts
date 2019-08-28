@@ -306,11 +306,6 @@ export function defineSqlView(x: TemplateStringsArray, ...placeholders: SqlView[
 
     const viewName = calcViewName(varName, query);
 
-    console.log(varName);
-
-    console.log(JSON.stringify(query), viewName);
-
-
     allSqlViewCreateStatements.push({
         viewName: viewName,
         createQuery:

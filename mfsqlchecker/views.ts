@@ -26,7 +26,6 @@ export class SqlViewDefinition {
     static parseFromTemplateExpression(projectDir: string, sourceFile: ts.SourceFile, varName: string | null, node: ts.TemplateLiteral): Either<ErrorDiagnostic, SqlViewDefinition> {
         if (ts.isNoSubstitutionTemplateLiteral(node)) {
             const sourceMap: [number, number][] = [[0, node.pos]];
-            console.log("sourceMap", sourceMap);
             return {
                 type: "Right",
                 value: new SqlViewDefinition(sourceFile.fileName, sourceFile.text, varName, [{ type: "StringFragment", text: node.text }], sourceMap)
@@ -338,11 +337,9 @@ export function sqlViewsLibraryAddFromSourceFile(projectDir: string, sourceFile:
 
     function visit(sf: ts.SourceFile, node: ts.Node) {
         if (ts.isVariableStatement(node)) {
-            console.log("FOUND VARIABLE STMT");
             for (const decl of node.declarationList.declarations) {
                 if (decl.initializer !== undefined) {
                     if (ts.isTaggedTemplateExpression(decl.initializer)) {
-                        console.log("FOUND TEMPLATE");
                         if (ts.isIdentifier(decl.initializer.tag) && isIdentifierFromModule(decl.initializer.tag, "defineSqlView", "./lib/sql_linter")) {
                             if (!ts.isIdentifier(decl.name)) {
                                 throw new ValidationError(sf, decl.name, "defineSqlView not assigned to a variable");
@@ -353,7 +350,6 @@ export function sqlViewsLibraryAddFromSourceFile(projectDir: string, sourceFile:
                             }
                             const viewName = decl.name.text;
                             const qualifiedSqlViewName = QualifiedSqlViewName.create(sourceFileModuleName(projectDir, sf), viewName);
-                            console.log("viewName", viewName, qualifiedSqlViewName);
                             const sqlViewDefinition = SqlViewDefinition.parseFromTemplateExpression(projectDir, sf, viewName, decl.initializer.template);
                             switch (sqlViewDefinition.type) {
                                 case "Left":

@@ -82,7 +82,7 @@ export class DbConnector {
             const allFiles = await readdirAsync(this.migrationsDir);
             const matchingFiles = allFiles.filter(isMigrationFile).sort();
             for (const matchingFile of matchingFiles) {
-                console.log("matchingFile", matchingFile);
+                console.log("Migration file", matchingFile);
                 const text = await readFileAsync(path.join(this.migrationsDir, matchingFile));
                 try {
                     await this.client.query(text);
@@ -120,8 +120,6 @@ export class DbConnector {
             }
             this.dbMigrationsHash = hash;
         }
-
-        console.log(new Date(), hash);
 
         let queryErrors: ErrorDiagnostic[] = [];
 
@@ -190,7 +188,6 @@ export class DbConnector {
                     assertNever(query);
             }
         }
-        console.log("xx", xx);
         return xx.concat(queryErrors);
 
         // console.log(new Date());
@@ -238,7 +235,6 @@ async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], 
     for (let i = oldViews.length - 1; i >= 0; --i) {
         const viewName = oldViews[i];
         if (!newViewNames.has(viewName[0])) {
-            console.log("Dropping view", viewName[0]);
             await dropView(client, viewName[0]);
             updated = true;
         }
@@ -265,7 +261,6 @@ async function updateViews(client: pg.Client, oldViews: [string, ViewAnswer][], 
 
 async function processCreateView(client: pg.Client, view: SqlCreateView): Promise<ViewAnswer> {
     try {
-        console.log("Executing view", view.viewName);
         await client.query(`CREATE OR REPLACE VIEW ${view.viewName} AS ${view.createQuery}`);
     } catch (err) {
         const perr = parsePostgreSqlError(err);
