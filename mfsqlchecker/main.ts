@@ -2,6 +2,7 @@ import "source-map-support/register"; // tslint:disable-line:no-import-side-effe
 
 import { assertNever } from "assert-never";
 import * as commander from "commander";
+import { loadConfigFile } from "./ConfigFile";
 import { DbConnector } from "./DbConnector";
 import { ErrorDiagnostic } from "./ErrorDiagnostic";
 import { codeFrameFormatter } from "./formatters/codeFrameFormatter";
@@ -24,8 +25,8 @@ enum Format {
 interface Options {
     readonly watchMode: boolean;
     readonly projectDir: string;
-    readonly migrationsDir: string;
-    readonly uniqueTableColumnTypesFile: string | null;
+    readonly migrationsDir: string | null;
+    readonly configFile: string | null;
     readonly postgresConnection: PostgresConnection | null;
     readonly format: Format;
 }
@@ -55,7 +56,7 @@ function parseOptions(): Options {
         .option("-w, --watch", "watch mode")
         .option("-p, --project <dir>", "Project directory that should be checked")
         .option("-m, --migrations <dir>", "Migrations directory that should be used")
-        .option("-c, --unique-cols <file>", "Unique table column types file")
+        .option("-c, --config <file>", "Project config file")
         .option("-u, --postgres-url <url>", "PostgreSQL connection string")
         .option("-d, --db-name <name>", "Name of database to use")
         .option("--postgres-version <version>", "Version of PostgreSQL server to test against")
@@ -85,7 +86,6 @@ function parseOptions(): Options {
     }
 
     required("project", "--project");
-    required("migrations", "--migrations");
 
     if (program.dbName && !program.postgresUrl) {
         console.error(`error: --db-name argument can only be used together with --postgres-url`);
@@ -105,8 +105,8 @@ function parseOptions(): Options {
     const options: Options = {
         watchMode: program.watch === true,
         projectDir: program.project,
-        migrationsDir: program.migrations,
-        uniqueTableColumnTypesFile: program.uniqueCols ? program.uniqueCols : null,
+        migrationsDir: program.migrations ? program.migrations : null,
+        configFile: program.config ? program.config : null,
         postgresConnection: postgres,
         format: program.format
     };
@@ -132,6 +132,34 @@ async function main(): Promise<void> {
         process.exit(1);
     }
 
+    let migrationsDir: string | null = null;
+    if (options.configFile !== null) {
+        const config = loadConfigFile(options.configFile);
+        switch (config.type) {
+            case "Left":
+                console.error(`Error Loading config file: ${options.configFile}`);
+                for (const message of config.value.messages) {
+                    console.error(message);
+                }
+                return process.exit(1);
+            case "Right":
+                if (config.value.migrationsDir !== undefined) {
+                    migrationsDir = config.value.migrationsDir;
+                }
+                break;
+            default:
+                return assertNever(config);
+        }
+    }
+    if (options.migrationsDir !== null) {
+        migrationsDir = options.migrationsDir;
+    }
+
+    if (migrationsDir === null) {
+        console.error("migrations-dir is missing. Must be set in config file or command line");
+        return process.exit(1);
+    }
+
     let pgServer: PostgresServer | null = null;
 
     let url: string;
@@ -145,7 +173,6 @@ async function main(): Promise<void> {
         dbName = undefined;
     }
     try {
-
         process.on("SIGINT", async () => {
             if (pgServer !== null) {
                 await pgServer.close();
@@ -156,7 +183,7 @@ async function main(): Promise<void> {
 
         let dbConnector: DbConnector;
         try {
-            dbConnector = await DbConnector.Connect(options.migrationsDir, options.uniqueTableColumnTypesFile, url, dbName);
+            dbConnector = await DbConnector.Connect(migrationsDir, url, dbName);
         } catch (err) {
             const perr = parsePostgreSqlError(err);
             if (perr !== null) {
@@ -179,7 +206,7 @@ async function main(): Promise<void> {
         }
         try {
             const formatter = formatFunction(options.format);
-            const e = new SqlCheckerEngine(options.uniqueTableColumnTypesFile, dbConnector);
+            const e = new SqlCheckerEngine(options.configFile, dbConnector);
             if (options.watchMode) {
                 const w = new TypeScriptWatcher(e, formatter);
                 w.run(options.projectDir);

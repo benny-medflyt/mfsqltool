@@ -4,15 +4,14 @@ import { assertNever } from "assert-never";
 import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
+import { loadConfigFile, sqlUniqueTypeName, UniqueTableColumnType } from "./ConfigFile";
 import { DbConnector } from "./DbConnector";
 import { ErrorDiagnostic } from "./ErrorDiagnostic";
 import { findAllQueryCalls, QueryCallExpression, resolveQueryFragment, SqlType, TypeScriptType } from "./queries";
-import { parseUniqueTableColumnTypeFile, sqlUniqueTypeName, UniqueTableColumnType } from "./unique_table_column_types";
 import { QualifiedSqlViewName, resolveAllViewDefinitions, sourceFileModuleName, SqlViewDefinition, sqlViewLibraryResetToInitialFragmentsIncludingDeps, sqlViewsLibraryAddFromSourceFile } from "./views";
 
 export class SqlCheckerEngine {
-    constructor(private readonly uniqueTableColumnTypesFile: string | null, private readonly dbConnector: DbConnector) {
-        // TODO ...
+    constructor(private readonly configFileName: string | null, private readonly dbConnector: DbConnector) {
         this.viewLibrary = new Map<QualifiedSqlViewName, SqlViewDefinition>();
     }
 
@@ -74,17 +73,19 @@ export class SqlCheckerEngine {
         };
 
         let uniqueTableColumnTypes: UniqueTableColumnType[] = [];
-        if (this.uniqueTableColumnTypesFile !== null) {
-            const fileContents = fs.readFileSync(this.uniqueTableColumnTypesFile, { encoding: "utf8" });
-            const result = parseUniqueTableColumnTypeFile(this.uniqueTableColumnTypesFile, fileContents);
-            switch (result.type) {
+
+        if (this.configFileName !== null) {
+            const config = loadConfigFile(this.configFileName);
+            switch (config.type) {
                 case "Left":
-                    throw new Error("TODO !!! .... " + JSON.stringify(result.value.messages));
+                    return Promise.resolve<ErrorDiagnostic[]>([config.value]);
                 case "Right":
-                    uniqueTableColumnTypes = result.value;
+                    if (config.value.uniqueTableColumnTypes !== undefined) {
+                        uniqueTableColumnTypes = config.value.uniqueTableColumnTypes;
+                    }
                     break;
                 default:
-                    return assertNever(result);
+                    return assertNever(config);
             }
         }
 
@@ -99,7 +100,8 @@ export class SqlCheckerEngine {
 
         return this.dbConnector.validateManifest({
             queries: resolvedQueries,
-            viewLibrary: sqlViews
+            viewLibrary: sqlViews,
+            uniqueTableColumnTypes: uniqueTableColumnTypes
         });
 
         // const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);

@@ -6,7 +6,7 @@
         {
             "label": "mfsqlchecker",
             "type": "shell",
-            "command": "node ./build/mfsqlchecker/main.js -p demo/ -m migrations/ -c demo/unique_table_column_types.json --format vscode --watch",
+            "command": "node ./build/mfsqlchecker/main.js -p demo/ -c demo/mfsqlchecker.json --format vscode --watch",
             "isBackground": true,
             "problemMatcher": {
                 "owner": "mfsqlchecker",

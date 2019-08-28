@@ -4,18 +4,19 @@ import { Bar, Presets } from "cli-progress";
 import * as fs from "fs";
 import * as path from "path";
 import * as pg from "pg";
+import { equalsUniqueTableColumnTypes, makeUniqueColumnTypes, sqlUniqueTypeName, UniqueTableColumnType } from "./ConfigFile";
 import { Either } from "./either";
 import { ErrorDiagnostic, postgresqlErrorDiagnostic, SrcSpan, toSrcSpan } from "./ErrorDiagnostic";
 import { closePg, connectPg, dropAllFunctions, dropAllSequences, dropAllTables, dropAllTypes, parsePostgreSqlError, pgDescribeQuery, pgMonkeyPatchClient, PostgreSqlError } from "./pg_extra";
 import { calcDbMigrationsHash, connReplaceDbName, createBlankDatabase, dropDatabase, isMigrationFile, readdirAsync, testDatabaseName } from "./pg_test_db";
 import { ColNullability, ResolvedQuery, SqlType, TypeScriptType } from "./queries";
 import { resolveFromSourceMap } from "./source_maps";
-import { makeUniqueColumnTypes, parseUniqueTableColumnTypeFile, sqlUniqueTypeName, UniqueTableColumnType } from "./unique_table_column_types";
 import { QualifiedSqlViewName, SqlCreateView } from "./views";
 
 export interface Manifest {
     viewLibrary: SqlCreateView[];
     queries: Either<ErrorDiagnostic[], ResolvedQuery>[];
+    uniqueTableColumnTypes: UniqueTableColumnType[];
 }
 
 export type QueryCheckResult = QueryCheckResult.InvalidText;
@@ -33,17 +34,15 @@ namespace QueryCheckResult {
 }
 
 export class DbConnector {
-    // TODO !!!! The "uniqueTableColumnTypesFile" param should be removed. Instead send the parsed data in the Manifest (This class will internally store a hash of the previous val to determine if it needs to regen the stuff)
-    private constructor(migrationsDir: string, uniqueTableColumnTypesFile: string | null, client: pg.Client) {
+    private constructor(migrationsDir: string, client: pg.Client) {
         this.migrationsDir = migrationsDir;
-        this.uniqueTableColumnTypesFile = uniqueTableColumnTypesFile;
         this.client = client;
         pgMonkeyPatchClient(this.client);
     }
 
-    static async Connect(migrationsDir: string, uniqueTableColumnTypesFile: string | null, adminUrl: string, name?: string): Promise<DbConnector> {
+    static async Connect(migrationsDir: string, adminUrl: string, name?: string): Promise<DbConnector> {
         const client = await newConnect(adminUrl, name);
-        return new DbConnector(migrationsDir, uniqueTableColumnTypesFile, client);
+        return new DbConnector(migrationsDir, client);
     }
 
     async close(): Promise<void> {
@@ -51,7 +50,7 @@ export class DbConnector {
     }
 
     private migrationsDir: string;
-    private uniqueTableColumnTypesFile: string | null;
+    private prevUniqueTableColumnTypes: UniqueTableColumnType[] = [];
     private client: pg.Client;
 
     private viewNames: [string, ViewAnswer][] = [];
@@ -66,7 +65,7 @@ export class DbConnector {
 
     async validateManifest(manifest: Manifest): Promise<ErrorDiagnostic[]> {
         const hash = await calcDbMigrationsHash(this.migrationsDir);
-        if (this.dbMigrationsHash !== hash) {
+        if (this.dbMigrationsHash !== hash || !equalsUniqueTableColumnTypes(manifest.uniqueTableColumnTypes, this.prevUniqueTableColumnTypes)) {
             this.dbMigrationsHash = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
             this.queryCache.clear();
             for (let i = this.viewNames.length - 1; i >= 0; --i) {
@@ -98,25 +97,10 @@ export class DbConnector {
                 }
             }
 
-            if (this.uniqueTableColumnTypesFile !== null) {
-                const fileContents = await readFileAsync(this.uniqueTableColumnTypesFile);
-                const result = parseUniqueTableColumnTypeFile(this.uniqueTableColumnTypesFile, fileContents);
-                let uniqueTableColumnTypes: UniqueTableColumnType[];
-                switch (result.type) {
-                    case "Left":
-                        const errorDiagnostic: ErrorDiagnostic = result.value;
-                        return [errorDiagnostic];
-                    case "Right":
-                        uniqueTableColumnTypes = result.value;
-                        break;
-                    default:
-                        return assertNever(result);
-                }
+            this.prevUniqueTableColumnTypes = manifest.uniqueTableColumnTypes;
 
-                this.uniqueColumnTypes = makeUniqueColumnTypes(uniqueTableColumnTypes);
-
-                await applyUniqueTableColumnTypes(this.client, uniqueTableColumnTypes);
-            }
+            this.uniqueColumnTypes = makeUniqueColumnTypes(this.prevUniqueTableColumnTypes);
+            await applyUniqueTableColumnTypes(this.client, this.prevUniqueTableColumnTypes);
 
             await this.tableColsLibrary.refreshTables(this.client);
 
