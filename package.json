@@ -1,7 +1,7 @@
 {
-  "name": "sqlchecker",
-  "version": "1.0.0",
-  "description": "",
+  "name": "mfsqlchecker",
+  "version": "0.0.1",
+  "description": "Statically validate correctness of all your SQL queries. TypeScript, PostgreSQL",
   "main": "index.js",
   "scripts": {
     "ts-watch": "tsc --project mfsqlchecker --watch",
@@ -9,8 +9,22 @@
     "lint": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish",
     "lint-fix": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish --fix"
   },
-  "author": "",
-  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MedFlyt/mfsqlchecker.git"
+  },
+  "keywords": [
+    "TypeScript",
+    "SQL",
+    "PostgreSQL",
+    "ORM"
+  ],
+  "author": "MedFlyt LLC.",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/MedFlyt/mfsqlchecker/issues"
+  },
+  "homepage": "https://github.com/MedFlyt/mfsqlchecker#readme",
   "dependencies": {
     "@types/adm-zip": "0.4.32",
     "@types/cli-progress": "1.8.1",
