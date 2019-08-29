@@ -5,10 +5,9 @@
   "main": "index.js",
   "scripts": {
     "ts-watch": "tsc --project mfsqlchecker --watch",
-    "start": "node build/mfsqlchecker/sqlchecker_engine.js",
+    "check-demo": "node ./build/mfsqlchecker/main.js -p demo -c demo/mfsqlchecker.json",
     "lint": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish",
-    "lint-fix": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish --fix",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "lint-fix": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish --fix"
   },
   "author": "",
   "license": "ISC",
