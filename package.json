@@ -3,10 +3,11 @@
   "version": "0.0.1",
   "description": "Statically validate correctness of all your SQL queries. TypeScript, PostgreSQL",
   "main": "index.js",
+  "bin": "./mfsqlchecker.js",
   "scripts": {
     "build": "rm -rf build && tsc --project mfsqlchecker",
     "ts-watch": "tsc --project mfsqlchecker --watch",
-    "check-demo": "node ./build/mfsqlchecker/main.js -p demo -c demo/mfsqlchecker.json",
+    "check-demo": "node ./mfsqlchecker.js -p demo -c demo/mfsqlchecker.json",
     "lint": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish",
     "lint-fix": "tslint --project ./mfsqlchecker/tsconfig.json --format stylish --fix"
   },
