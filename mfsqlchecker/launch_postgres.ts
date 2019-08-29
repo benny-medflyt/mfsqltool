@@ -375,12 +375,7 @@ export class PostgresServer {
     }
 }
 
-export async function main() {
-    // const platform: Platform = getCurrentPlatform();
-
-    // const p = await getPostgresBinaryPath(platform, "10.10", "initdb");
-    // console.log(p);
-
+export async function test() {
     process.on("SIGINT", () => process.exit());
 
     const pgServer = await PostgresServer.start("10.10");
@@ -394,4 +389,4 @@ export async function main() {
         await pgServer.close();
     }
 }
-// main();
+// test();

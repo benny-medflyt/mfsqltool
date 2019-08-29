@@ -16,4 +16,3 @@ export function resolveFromSourceMap(position: number, sourceMap: [number, numbe
 
     return sourceMap[i][1] + (position + 1 - sourceMap[i][0]);
 }
-

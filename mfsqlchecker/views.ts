@@ -386,13 +386,3 @@ export function sqlViewLibraryResetToInitialFragmentsIncludingDeps(viewName: Qua
         });
     }
 }
-
-/*
-export function sqlViewsLibraryClearModule(viewLibrary: Map<QualifiedSqlViewName, SqlViewDefinition>, moduleId: string): void {
-    for (const qname of viewLibrary.keys()) {
-        if (QualifiedSqlViewName.moduleId(qname) === moduleId) {
-            viewLibrary.delete(qname);
-        }
-    }
-}
-*/

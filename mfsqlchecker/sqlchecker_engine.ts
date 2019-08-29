@@ -17,7 +17,6 @@ export class SqlCheckerEngine {
 
     viewLibrary: Map<QualifiedSqlViewName, SqlViewDefinition>;
 
-    // TODO return list of errors
     checkChangedSourceFiles(projectDir: string, program: ts.Program, checker: ts.TypeChecker, sourceFiles: string[]): Promise<ErrorDiagnostic[]> {
         const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
 
@@ -90,75 +89,13 @@ export class SqlCheckerEngine {
 
         const resolvedQueries = queries.map(q => resolveQueryFragment(typeScriptUniqueColumnTypes, projectDir, checker, q, lookupViewName));
 
-        // console.log(resolvedQueries);
-
         return this.dbConnector.validateManifest({
             queries: resolvedQueries,
             viewLibrary: sqlViews,
             uniqueTableColumnTypes: uniqueTableColumnTypes
         });
-
-        // const progSourceFiles = program.getSourceFiles().filter(s => !s.isDeclarationFile);
-
-        // let queries: QueryCallExpression[] = [];
-        // for (const sourceFile of progSourceFiles) {
-        //     queries = queries.concat(findAllQueryCalls(sourceFile));
-        // }
-
-        // console.log("queries", queries);
-
-        // this.dbConnector.validateManifest({
-        //     queries: [queries[0].queryFragments[0].text],
-        //     viewLibrary: null
-        // });
     }
 }
-
-// function processQuery(checker: ts.TypeChecker, query: QueryCallExpression): void {
-//     console.log("PROCESS QUERY");
-//     console.log(query.typeArgument);
-//     for (const frag of query.queryFragments) {
-//         switch (frag.type) {
-//             case "StringFragment":
-//                 break;
-//             case "Expression":
-//                 const t = checker.getTypeAtLocation(frag.exp);
-//                 console.log(t);
-//                 break;
-//             default:
-//                 assertNever(frag);
-//         }
-//     }
-//     console.log("DONE");
-// }
-
-// export function checkAllSqlQueries(checker: ts.TypeChecker, sourceFiles: ReadonlyArray<ts.SourceFile>) {
-//     function visit(node: ts.Node) {
-//         if (ts.isCallExpression(node)) {
-//             if (ts.isIdentifier(node.expression)) {
-//                 if (isIdentifierFromModule(node.expression, "query", "./lib/sql_linter")) {
-//                     const query = buildQueryCallExpression(node);
-//                     if (query !== null) {
-//                         processQuery(checker, query);
-//                     }
-//                     // console.log("QUERY", node.arguments.length);
-//                     // console.log(checker.getTypeAtLocation(node.typeArguments![0]).symbol);
-//                     // console.log(checker.getTypeAtLocation(node.arguments[1]));
-//                     // // console.log(checker.symbolToEntityName(checker.getSymbolAtLocation(node.arguments[0]), ts.SymbolFlags.None));
-//                     // // console.log(checker.symbolToEntityName(checker.getSymbolAtLocation(node.arguments[1]), ts.SymbolFlags.None));
-//                 }
-//             }
-//         }
-
-//         ts.forEachChild(node, visit);
-//     }
-
-//     for (const sourceFile of sourceFiles) {
-//         console.log("sourceFile", sourceFile.fileName);
-//         ts.forEachChild(sourceFile, visit);
-//     }
-// }
-
 
 export async function typeScriptSingleRunCheck(projectDir: string, observer: SqlCheckerEngine, formatter: (errorDiagnostic: ErrorDiagnostic) => string): Promise<boolean> {
     const configPath = ts.findConfigFile(
@@ -273,10 +210,7 @@ export class TypeScriptWatcher {
 
         const host = ts.createWatchCompilerHost(
             configPath,
-            {
-                // noEmit: true
-                // noEmitOnError: false
-            },
+            {},
             ts.sys,
             this.createProgram,
             this.reportDiagnostic,
@@ -317,7 +251,6 @@ export class TypeScriptWatcher {
 
             const foundSourceFiles: ts.SourceFile[] = [];
             for (const sourceFile of progSourceFiles) {
-                // console.log("sourceFileName", sourceFile.fileName);
                 if (this.changedSourceFiles.indexOf(sourceFile.fileName) >= 0) {
                     foundSourceFiles.push(sourceFile);
                 }
@@ -326,7 +259,6 @@ export class TypeScriptWatcher {
             this.afterChange(program, foundSourceFiles);
             this.changedSourceFiles = [];
         }
-        // console.info("INFO", JSON.stringify(diagnostic), ts.formatDiagnostic(diagnostic, formatHost));
     }
 
     afterChange = (program: ts.Program, sourceFiles: ts.SourceFile[]): void => {
@@ -367,34 +299,3 @@ export class TypeScriptWatcher {
     private program: ts.Program | undefined = undefined;
     private queuedSourceFiles: string[] = [];
 }
-
-// const formatHost: ts.FormatDiagnosticsHost = {
-//     getCanonicalFileName: path => path,
-//     getCurrentDirectory: ts.sys.getCurrentDirectory,
-//     getNewLine: () => ts.sys.newLine
-// };
-
-// function reportDiagnostic(diagnostic: ts.Diagnostic) {
-//     console.error(
-//         "DIAG ERROR",
-//         diagnostic.code,
-//         ":",
-//         ts.flattenDiagnosticMessageText(
-//             diagnostic.messageText,
-//             formatHost.getNewLine()
-//         )
-//     );
-// }
-
-/*
-async function main() {
-    console.log("connecting...");
-    const dbConnector = await DbConnector.Connect("migrations", "postgres://test:test@localhost:6432/test", "sql_checker_db");
-    console.log("connected");
-    const e = new SqlCheckerEngine(dbConnector);
-    const w = new TypeScriptWatcher(e);
-    w.run("./demo");
-}
-
-main();
-*/

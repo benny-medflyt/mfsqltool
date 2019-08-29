@@ -175,42 +175,20 @@ export class DbConnector {
 
         this.queryCache = newQueryCache;
 
-        let xx: ErrorDiagnostic[] = [];
+        let finalErrors: ErrorDiagnostic[] = [];
         for (const query of manifest.queries) {
             switch (query.type) {
                 case "Left":
-                    xx = xx.concat(query.value);
+                    finalErrors = finalErrors.concat(query.value);
                     break;
                 case "Right":
-                    xx = xx.concat(query.value.errors);
+                    finalErrors = finalErrors.concat(query.value.errors);
                     break;
                 default:
                     assertNever(query);
             }
         }
-        return xx.concat(queryErrors);
-
-        // console.log(new Date());
-        // for (let i = 0; i < 1; ++i) {
-        //     for (const query of manifest.queries) {
-        //         console.log(query);
-        //         let fields: pg.FieldDef[] | null;
-        //         try {
-        //             fields = await pgDescribeQuery(this.client, query);
-        //         } catch (err) {
-        //             if (getPostgreSqlErrorCode(err) === null) {
-        //                 throw err;
-        //             } else {
-        //                 // Problem with the query
-        //                 // TODO ...
-        //                 console.log(err);
-        //                 return null as any;
-        //             }
-        //         }
-        //         console.log(fields)
-        //     }
-        // }
-        // console.log(new Date());
+        return finalErrors.concat(queryErrors);
     }
 
     resetViews(): Promise<void> {
