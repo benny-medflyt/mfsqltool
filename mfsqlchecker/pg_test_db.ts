@@ -79,77 +79,6 @@ export function validateTestDatabaseCluster(url: string): void {
     }
 }
 
-async function createMedflytTemplateDatabase(_adminUrl: string, adminConn: pg.Client, medflytDbTemplate: string): Promise<void> {
-    // Use a temporary name and then only at the end rename, to ensure that an
-    // interrupted migration won't leave after it broken template database
-    const tmpName = await tmpDatabaseName();
-
-    await createBlankDatabase(adminConn, tmpName);
-
-    let success = false;
-    try {
-        await logWithTiming("Run migrations on new MedFlyt template db", () => {
-            throw new Error("TODO");
-            // await flywayMigrateDatabase(connReplaceDbName(adminUrl, tmpName));
-        });
-        success = true;
-    } finally {
-        if (!success) {
-            // If the migration failed then clean up after ourselves.
-
-            await dropDatabase(adminConn, tmpName);
-        }
-    }
-
-    await renameDatabase(adminConn, tmpName, medflytDbTemplate);
-}
-
-/**
- * You should call `destroyTestDb` when you are finished. But you may choose not
- * to if you want to leave the database around for manual inspection of it.
- *
- * @param name An optional name to call the database. WARNING: IF IT EXISTS IT
- * WILL BE COMPLETELY ERASED!
- *
- * @returns the name of the new database
- */
-export async function createTestDb(adminUrl: string, name?: string): Promise<string> {
-    validateTestDatabaseCluster(adminUrl);
-
-    const dbMigrationsHash = await logWithTiming("Calculate migrations hash", () => {
-        throw new Error("TODO");
-        // return calcDbMigrationsHash();
-    });
-
-    const medflytDbTemplate = `medflyt_template_${dbMigrationsHash}`;
-
-    const newDbName = name !== undefined
-        ? name
-        : await testDatabaseName();
-
-    const adminConn1 = await connectPg(adminUrl);
-    try {
-        const medflytDbTemplateExists = await databaseExists(adminConn1, medflytDbTemplate);
-        if (!medflytDbTemplateExists) {
-            await createMedflytTemplateDatabase(adminUrl, adminConn1, medflytDbTemplate);
-        }
-
-        if (name !== undefined) {
-            await logWithTiming(`Delete (possibly) existing test database: ${name}`, async () => {
-                await dropDatabase(adminConn1, name);
-            });
-        }
-
-        await logWithTiming(`Clone MedFlyt template db to: ${newDbName}`, async () => {
-            await cloneDatabase(adminConn1, medflytDbTemplate, newDbName);
-        });
-    } finally {
-        await closePg(adminConn1);
-    }
-
-    return newDbName;
-}
-
 /**
  * @param testDb the name of the database, as returned from `createTestDb`
  */
@@ -166,17 +95,6 @@ export async function destroyTestDb(adminUrl: string, testDb: string): Promise<v
     }
 }
 
-export async function withNewEmptyDb<A>(adminUrl: string, action: (connUrl: string) => Promise<A>): Promise<A> {
-    const newDbName = await createTestDb(adminUrl);
-    try {
-        const connUrl = connReplaceDbName(adminUrl, newDbName);
-
-        return await action(connUrl);
-    } finally {
-        await destroyTestDb(adminUrl, newDbName);
-    }
-}
-
 export async function databaseExists(conn: pg.Client, dbName: string): Promise<boolean> {
     const rows = await conn.query("SELECT 1 FROM pg_database WHERE datname=$1", [dbName]);
 
@@ -185,14 +103,6 @@ export async function databaseExists(conn: pg.Client, dbName: string): Promise<b
 
 export async function createBlankDatabase(conn: pg.Client, dbName: string): Promise<void> {
     await conn.query(`CREATE DATABASE ${dbName} WITH TEMPLATE template0`);
-}
-
-async function cloneDatabase(conn: pg.Client, source: string, newName: string): Promise<void> {
-    await conn.query(`CREATE DATABASE ${newName} WITH TEMPLATE ${source}`);
-}
-
-async function renameDatabase(conn: pg.Client, oldName: string, newName: string): Promise<void> {
-    await conn.query(`ALTER DATABASE ${oldName} RENAME TO ${newName}`);
 }
 
 export async function dropDatabase(conn: pg.Client, dbName: string): Promise<void> {
@@ -204,17 +114,6 @@ export async function dropDatabase(conn: pg.Client, dbName: string): Promise<voi
         `);
 
     await conn.query(`DROP DATABASE IF EXISTS ${dbName}`);
-}
-
-export async function withNewEmptyDbConn<A>(adminUrl: string, action: (conn: pg.Client) => Promise<A>): Promise<A> {
-    return withNewEmptyDb(adminUrl, async (connUrl: string) => {
-        const conn = await connectPg(connUrl);
-        try {
-            return await action(conn);
-        } finally {
-            await closePg(conn);
-        }
-    });
 }
 
 export function readdirAsync(dir: string): Promise<string[]> {
@@ -251,20 +150,6 @@ function calcFileHash(filename: string, hashAlgorithm: string): Promise<string> 
     });
 }
 
-function tmpDatabaseName(): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
-        crypto.randomBytes(16, (err, buf) => {
-            if (<boolean>(<any>err)) {
-                reject(err);
-                return;
-            }
-
-            const dbName = "medflyt_tmp_" + buf.toString("hex");
-            resolve(dbName);
-        });
-    });
-}
-
 export function testDatabaseName(): Promise<string> {
     return new Promise<string>((resolve, reject) => {
         crypto.randomBytes(16, (err, buf) => {
@@ -273,25 +158,8 @@ export function testDatabaseName(): Promise<string> {
                 return;
             }
 
-            const dbName = "medflyt_test_" + buf.toString("hex");
+            const dbName = "db_test_" + buf.toString("hex");
             resolve(dbName);
         });
     });
 }
-
-// async function main() {
-//     const connOptions: PostgresConnOptions = {
-//         url: "postgres://medflyt:password@localhost:5432/medflyt_props_test1",
-//     };
-
-//     await withNewEmptyDbConn(connOptions, async conn => {
-//         const rows = await db.any(conn,
-//             `
-//             SELECT 1;
-//             `, []);
-//         console.log(rows);
-//     });
-// }
-
-// // tslint:disable-next-line:no-floating-promises
-// main();
